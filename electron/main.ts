@@ -579,8 +579,9 @@ function shouldPromptMasterPassword(): boolean {
   // Without an in-memory key, account operations requiring decryption cannot proceed.
   if (!masterKey) return true;
 
-  if (mode === 'never') return false;
-  if (mode === 'every_time') return true;
+  // If we have a masterKey in memory, the user is already authenticated in this session.
+  // For 'never' and 'every_time' modes, don't prompt again until app restart.
+  if (mode === 'never' || mode === 'every_time') return false;
 
   const lastUnlockAt = Number(store.get('security_v2.lastUnlockAt') || 0);
   if (!Number.isFinite(lastUnlockAt) || lastUnlockAt <= 0) return true;
