@@ -545,10 +545,10 @@ function shouldPromptMasterPassword() {
     // Without an in-memory key, account operations requiring decryption cannot proceed.
     if (!masterKey)
         return true;
-    if (mode === 'never')
+    // If we have a masterKey in memory, the user is already authenticated in this session.
+    // For 'never' and 'every_time' modes, don't prompt again until app restart.
+    if (mode === 'never' || mode === 'every_time')
         return false;
-    if (mode === 'every_time')
-        return true;
     const lastUnlockAt = Number(store.get('security_v2.lastUnlockAt') || 0);
     if (!Number.isFinite(lastUnlockAt) || lastUnlockAt <= 0)
         return true;
@@ -749,90 +749,111 @@ last_play_attempt_epoch=0
 seen_window=0
 post_login_geometry_logged=0
 
-find_launcher_window() {
-  local id=""
-  if [ -n "$GW2_PID" ] && [ "$GW2_PID" -gt 0 ] 2>/dev/null; then
-    id="$(xdotool search --onlyvisible --pid "$GW2_PID" 2>/dev/null | head -n 1)"
-  fi
-  if [ -z "$id" ]; then
-    id="$(xdotool search --onlyvisible --name 'Guild Wars 2' 2>/dev/null | head -n 1)"
-  fi
-  if [ -z "$id" ]; then
-    id="$(xdotool search --onlyvisible --name 'Guild Wars' 2>/dev/null | head -n 1)"
-  fi
-  if [ -z "$id" ]; then
-    id="$(xdotool search --onlyvisible --name 'ArenaNet' 2>/dev/null | head -n 1)"
-  fi
-  echo "$id"
-}
-
-clear_focused_input() {
-  xdotool key --clearmodifiers --window "$win_id" ctrl+a
-  sleep 0.08
-  xdotool key --clearmodifiers --window "$win_id" Delete
-  sleep 0.08
-  xdotool key --clearmodifiers --window "$win_id" ctrl+a
-  sleep 0.08
-  xdotool key --clearmodifiers --window "$win_id" BackSpace
-  sleep 0.08
-
-  # Conservative fallback clear path.
-  xdotool key --clearmodifiers --window "$win_id" End
-  sleep 0.04
-  for _ in $(seq 1 8); do
-    xdotool key --clearmodifiers --window "$win_id" BackSpace
-  done
-  sleep 0.04
-  xdotool key --clearmodifiers --window "$win_id" Home
-  sleep 0.04
-  for _ in $(seq 1 8); do
-    xdotool key --clearmodifiers --window "$win_id" Delete
-  done
-  sleep 0.05
-}
-
-click_play_button() {
-  local attempt="$1"
-  local cx cy
-  eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
-  
-  if [ -n "$HEIGHT" ] && [ "$HEIGHT" -gt 150 ] 2>/dev/null && [ -n "$WIDTH" ] && [ "$WIDTH" -gt 250 ] 2>/dev/null; then
-    cx=$((WIDTH - 250))
-    cy=$((HEIGHT - 250))
-    xdotool mousemove --window "$win_id" "$cx" "$cy" click 1
-    log_automation "play-click fixed-offset-v2 x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT"
-    sleep 0.08
-    return 0
-  fi
-  
-  log_automation "play-click broken (geometry invalid) win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
-  return 1
-}
-
-for i in $(seq 1 180); do
-  sleep 0.4
-
-  win_id="$(find_launcher_window)"
-
-  if [ -n "$win_id" ] && [ "$win_id" -gt 0 ] 2>/dev/null; then
-    if [ "$seen_window" -eq 0 ]; then
-      log_automation "window-detected id=$win_id"
-      if eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)"; then
-        log_automation "window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
-      fi
-      seen_window=1
+is_blocking_prompt_visible() {
+    # Check for KDE's specific window title for XWayland/Wayland bridge permissions
+    if xdotool search --onlyvisible --name "Legacy X11 App Support" 2>/dev/null >/dev/null; then
+      return 0
     fi
-    now_epoch="$(date +%s)"
+    # Check for other potential portal/permission prompts
+    if xdotool search --onlyvisible --name "Remote Desktop" 2>/dev/null >/dev/null; then
+      return 0
+    fi
+     if xdotool search --onlyvisible --name "Input Capture" 2>/dev/null >/dev/null; then
+      return 0
+    fi
+    return 1
+  }
 
-    xdotool windowraise "$win_id" 2>/dev/null || true
-    xdotool windowactivate --sync "$win_id"
-    xdotool windowfocus --sync "$win_id" 2>/dev/null || true
-    active_id="$(xdotool getactivewindow 2>/dev/null || true)"
-    if [ "$active_id" != "$win_id" ]; then
+  find_launcher_window() {
+    local id=""
+    if [ -n "$GW2_PID" ] && [ "$GW2_PID" -gt 0 ] 2>/dev/null; then
+      id="$(xdotool search --onlyvisible --pid "$GW2_PID" 2>/dev/null | head -n 1)"
+    fi
+    if [ -z "$id" ]; then
+      id="$(xdotool search --onlyvisible --name 'Guild Wars 2' 2>/dev/null | head -n 1)"
+    fi
+    if [ -z "$id" ]; then
+      id="$(xdotool search --onlyvisible --name 'Guild Wars' 2>/dev/null | head -n 1)"
+    fi
+    if [ -z "$id" ]; then
+      id="$(xdotool search --onlyvisible --name 'ArenaNet' 2>/dev/null | head -n 1)"
+    fi
+    echo "$id"
+  }
+
+  clear_focused_input() {
+    xdotool key --clearmodifiers --window "$win_id" ctrl+a
+    sleep 0.08
+    xdotool key --clearmodifiers --window "$win_id" Delete
+    sleep 0.08
+    xdotool key --clearmodifiers --window "$win_id" ctrl+a
+    sleep 0.08
+    xdotool key --clearmodifiers --window "$win_id" BackSpace
+    sleep 0.08
+
+    # Conservative fallback clear path.
+    xdotool key --clearmodifiers --window "$win_id" End
+    sleep 0.04
+    for _ in $(seq 1 8); do
+      xdotool key --clearmodifiers --window "$win_id" BackSpace
+    done
+    sleep 0.04
+    xdotool key --clearmodifiers --window "$win_id" Home
+    sleep 0.04
+    for _ in $(seq 1 8); do
+      xdotool key --clearmodifiers --window "$win_id" Delete
+    done
+    sleep 0.05
+  }
+
+  click_play_button() {
+    local attempt="$1"
+    local cx cy
+    eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
+    
+    if [ -n "$HEIGHT" ] && [ "$HEIGHT" -gt 150 ] 2>/dev/null && [ -n "$WIDTH" ] && [ "$WIDTH" -gt 250 ] 2>/dev/null; then
+      cx=$((WIDTH - 250))
+      cy=$((HEIGHT - 250))
+      xdotool mousemove --window "$win_id" "$cx" "$cy" click 1
+      log_automation "play-click fixed-offset-v2 x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT"
+      sleep 0.08
+      return 0
+    fi
+    
+    log_automation "play-click broken (geometry invalid) win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
+    return 1
+  }
+
+  for i in $(seq 1 180); do
+    sleep 0.4
+
+    if is_blocking_prompt_visible; then
+      log_automation "waiting-for-blocking-prompt"
+      sleep 1.0
       continue
     fi
 
-    if [ "$credential_attempt_count" -lt "$max_credential_attempts" ]; then
+    win_id="$(find_launcher_window)"
+
+    if [ -n "$win_id" ] && [ "$win_id" -gt 0 ] 2>/dev/null; then
+      if [ "$seen_window" -eq 0 ]; then
+        log_automation "window-detected id=$win_id"
+        if eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)"; then
+          log_automation "window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
+        fi
+        seen_window=1
+      fi
+      now_epoch="$(date +%s)"
+
+      xdotool windowraise "$win_id" 2>/dev/null || true
+      xdotool windowactivate --sync "$win_id"
+      xdotool windowfocus --sync "$win_id" 2>/dev/null || true
+      active_id="$(xdotool getactivewindow 2>/dev/null || true)"
+      if [ "$active_id" != "$win_id" ]; then
+        continue
+      fi
+
+      if [ "$credential_attempt_count" -lt "$max_credential_attempts" ]; then
       # Single fixed wait so controls are writable; no retry/backoff typing loop.
       sleep 2
       active_id="$(xdotool getactivewindow 2>/dev/null || true)"
