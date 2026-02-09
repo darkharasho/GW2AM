@@ -92,16 +92,15 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClose, onSa
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-[var(--theme-overlay)] backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-[var(--theme-surface)] border border-[var(--theme-border)] rounded-xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl">
-                <div className="flex justify-between items-center mb-6">
+        <div className="fixed left-0 right-0 bottom-0 top-9 z-50 border-t border-[var(--theme-border)] bg-[var(--theme-surface)] flex flex-col">
+                <div className="flex justify-between items-center px-6 py-4 border-b border-[var(--theme-border)] bg-[var(--theme-surface)]">
                     <h2 className="text-xl font-bold text-white">{initialData ? 'Edit Account' : 'Add Account'}</h2>
                     <button onClick={onClose} className="text-[var(--theme-text-muted)] hover:text-white transition-colors">
                         <X size={24} />
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-1">Nickname</label>
                         <input
@@ -165,7 +164,7 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClose, onSa
 
 
                     {initialData ? (
-                        <div className="flex justify-between items-center mt-6">
+                        <div className="flex justify-between items-center mt-6 pt-4 border-t border-[var(--theme-border)]">
                             <button
                                 type="button"
                                 onClick={handleDelete}
@@ -181,7 +180,7 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClose, onSa
                             </button>
                         </div>
                     ) : (
-                        <div className="flex justify-end space-x-3 mt-6">
+                        <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-[var(--theme-border)]">
                             <button
                                 type="button"
                                 onClick={onClose}
@@ -198,7 +197,6 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClose, onSa
                         </div>
                     )}
                 </form>
-            </div>
         </div>
     );
 };
