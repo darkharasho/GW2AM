@@ -354,14 +354,44 @@ function App() {
     }, []);
 
     const showUpdateIndicator = updatePhase !== 'idle';
-    const updateIndicatorBaseClass = 'ml-2 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold';
-    const updateIndicatorClass = updatePhase === 'error'
-        ? `${updateIndicatorBaseClass} border-rose-500/40 bg-rose-500/10 text-rose-200`
-        : updatePhase === 'ready'
-            ? `${updateIndicatorBaseClass} border-emerald-500/40 bg-emerald-500/10 text-emerald-200`
-            : `${updateIndicatorBaseClass} border-sky-500/40 bg-sky-500/10 text-sky-200`;
     const updateIndicatorText = updateLabel
         || (updatePhase === 'checking' ? 'Checking for updates...' : updatePhase === 'downloading' ? 'Downloading update...' : updatePhase === 'ready' ? 'Update ready' : 'Update error');
+    const updateShortLabel = updatePhase === 'checking'
+        ? 'Checking'
+        : updatePhase === 'downloading'
+            ? (updateProgress !== null ? `${Math.round(updateProgress)}%` : 'Downloading')
+            : updatePhase === 'ready'
+                ? 'Ready'
+                : 'Error';
+    const updateIndicatorClass = `update-indicator ${updatePhase === 'error'
+        ? 'update-indicator--error'
+        : updatePhase === 'ready'
+            ? 'update-indicator--ready'
+            : ''}`;
+
+    const renderUpdateIndicator = () => {
+        if (!showUpdateIndicator) return null;
+        const progressWidth = updateProgress === null ? 28 : Math.max(8, Math.min(100, Math.round(updateProgress)));
+        return (
+            <span className={updateIndicatorClass} title={updateIndicatorText}>
+                {(updatePhase === 'checking' || updatePhase === 'downloading') && (
+                    <span className="update-indicator__state update-indicator__state--checking" aria-hidden="true">
+                        <span className="update-indicator__ring" />
+                        <RefreshCw size={10} className="update-indicator__spinner animate-spin" />
+                    </span>
+                )}
+                {updatePhase === 'ready' && <span className="update-indicator__state bg-emerald-300" aria-hidden="true" />}
+                {updatePhase === 'error' && <span className="update-indicator__state bg-rose-300" aria-hidden="true" />}
+                <span>{updateShortLabel}</span>
+                {updatePhase === 'downloading' && (
+                    <span className="update-indicator__progress" aria-hidden="true">
+                        <span className="update-indicator__progress-fill" style={{ width: `${progressWidth}%` }} />
+                        <span className="update-indicator__progress-shimmer" />
+                    </span>
+                )}
+            </span>
+        );
+    };
 
     // Window controls
     const minimize = () => {
@@ -388,18 +418,7 @@ function App() {
                         <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 AM
                         <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
-                        {showUpdateIndicator && (
-                            <span className={updateIndicatorClass} title={updateIndicatorText}>
-                                {updatePhase === 'error' ? (
-                                    <span className="h-2 w-2 rounded-full bg-rose-300 animate-pulse" />
-                                ) : updatePhase === 'ready' ? (
-                                    <span className="h-2 w-2 rounded-full bg-emerald-300" />
-                                ) : (
-                                    <RefreshCw size={10} className="animate-spin" />
-                                )}
-                                <span>{updatePhase === 'downloading' && updateProgress !== null ? `${Math.round(updateProgress)}%` : updatePhase}</span>
-                            </span>
-                        )}
+                        {renderUpdateIndicator()}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
@@ -418,18 +437,7 @@ function App() {
                         <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 AM
                         <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
-                        {showUpdateIndicator && (
-                            <span className={updateIndicatorClass} title={updateIndicatorText}>
-                                {updatePhase === 'error' ? (
-                                    <span className="h-2 w-2 rounded-full bg-rose-300 animate-pulse" />
-                                ) : updatePhase === 'ready' ? (
-                                    <span className="h-2 w-2 rounded-full bg-emerald-300" />
-                                ) : (
-                                    <RefreshCw size={10} className="animate-spin" />
-                                )}
-                                <span>{updatePhase === 'downloading' && updateProgress !== null ? `${Math.round(updateProgress)}%` : updatePhase}</span>
-                            </span>
-                        )}
+                        {renderUpdateIndicator()}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
@@ -453,18 +461,7 @@ function App() {
                     <img src="img/GW2AM.png" alt="GW2AM" className="w-5 h-5 object-contain" />
                     GW2 AM
                     <span className="text-[11px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
-                    {showUpdateIndicator && (
-                        <span className={updateIndicatorClass} title={updateIndicatorText}>
-                            {updatePhase === 'error' ? (
-                                <span className="h-2 w-2 rounded-full bg-rose-300 animate-pulse" />
-                            ) : updatePhase === 'ready' ? (
-                                <span className="h-2 w-2 rounded-full bg-emerald-300" />
-                            ) : (
-                                <RefreshCw size={10} className="animate-spin" />
-                            )}
-                            <span>{updatePhase === 'downloading' && updateProgress !== null ? `${Math.round(updateProgress)}%` : updatePhase}</span>
-                        </span>
-                    )}
+                    {renderUpdateIndicator()}
                 </span>
                 <div className="flex space-x-1 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
                     <button onClick={minimize} className="p-1 hover:bg-[var(--theme-control-bg)] rounded text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors"><Minus size={14} /></button>

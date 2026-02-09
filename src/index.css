@@ -98,3 +98,114 @@ body {
   mask-position: center;
   mask-size: contain;
 }
+
+@keyframes updateBadgeEnter {
+  0% { opacity: 0; transform: translateX(-8px) scale(0.95); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes updatePulseRing {
+  0% { transform: scale(0.8); opacity: 0.75; }
+  80% { transform: scale(1.8); opacity: 0; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+@keyframes updateGlow {
+  0% { box-shadow: 0 0 0 rgba(56, 189, 248, 0.1); }
+  50% { box-shadow: 0 0 12px rgba(56, 189, 248, 0.35); }
+  100% { box-shadow: 0 0 0 rgba(56, 189, 248, 0.1); }
+}
+
+@keyframes updateShimmer {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+
+.update-indicator {
+  position: relative;
+  margin-left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: linear-gradient(120deg, rgba(56, 189, 248, 0.08), rgba(56, 189, 248, 0.16));
+  color: #bae6fd;
+  padding: 0.15rem 0.45rem;
+  font-size: 10px;
+  font-weight: 700;
+  animation: updateBadgeEnter 220ms ease-out, updateGlow 1600ms ease-in-out infinite;
+}
+
+.update-indicator--error {
+  border-color: rgba(244, 63, 94, 0.4);
+  background: linear-gradient(120deg, rgba(244, 63, 94, 0.08), rgba(244, 63, 94, 0.16));
+  color: #fecdd3;
+  animation: updateBadgeEnter 220ms ease-out;
+}
+
+.update-indicator--ready {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: linear-gradient(120deg, rgba(52, 211, 153, 0.08), rgba(52, 211, 153, 0.16));
+  color: #bbf7d0;
+  animation: updateBadgeEnter 220ms ease-out;
+}
+
+.update-indicator__state {
+  position: relative;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 9999px;
+  flex: 0 0 auto;
+  background: currentColor;
+}
+
+.update-indicator__state--checking,
+.update-indicator__state--downloading {
+  background: transparent;
+}
+
+.update-indicator__ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 1px solid currentColor;
+  animation: updatePulseRing 1.4s ease-out infinite;
+}
+
+.update-indicator__spinner {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.update-indicator__progress {
+  position: relative;
+  width: 3.1rem;
+  height: 0.22rem;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.update-indicator__progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, rgba(125, 211, 252, 0.8), rgba(56, 189, 248, 1));
+  transition: width 280ms ease;
+}
+
+.update-indicator__progress-shimmer {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  animation: updateShimmer 1200ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-indicator,
+  .update-indicator__ring,
+  .update-indicator__progress-shimmer {
+    animation: none;
+  }
+}
