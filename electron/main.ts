@@ -33,7 +33,20 @@ let persistWindowStateTimer: NodeJS.Timeout | null = null;
 let autoUpdateEnabled = false;
 
 log.transports.file.level = 'info';
+if (app.isPackaged) {
+  // AppImage can run without an attached terminal; avoid writing logs to broken stdio pipes.
+  log.transports.console.level = false;
+}
 autoUpdater.logger = log;
+
+process.stdout?.on?.('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
+process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') return;
+  throw err;
+});
 
 function logMain(scope: string, message: string): void {
   console.log(`[GW2AM][Main][${scope}] ${message}`);
