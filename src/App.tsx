@@ -29,10 +29,12 @@ function App() {
     const [editingAccount, setEditingAccount] = useState<Account | undefined>(undefined);
 
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [updatePhase, setUpdatePhase] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'error'>('idle');
+    const [updatePhase, setUpdatePhase] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'error' | 'up_to_date' | 'dismissing'>('idle');
     const [updateLabel, setUpdateLabel] = useState('');
     const [updateProgress, setUpdateProgress] = useState<number | null>(null);
     const processMissCountsRef = useRef<Record<string, number>>({});
+    const updateDismissTimerRef = useRef<number | null>(null);
+    const updateHideTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
         if (!window.api) {
@@ -301,18 +303,32 @@ function App() {
     useEffect(() => {
         if (!window.api) return;
 
+        const clearUpdateTimers = () => {
+            if (updateDismissTimerRef.current !== null) {
+                window.clearTimeout(updateDismissTimerRef.current);
+                updateDismissTimerRef.current = null;
+            }
+            if (updateHideTimerRef.current !== null) {
+                window.clearTimeout(updateHideTimerRef.current);
+                updateHideTimerRef.current = null;
+            }
+        };
+
         const removeListeners: Array<() => void> = [
             window.api.onUpdateMessage((value) => {
+                clearUpdateTimers();
                 const message = String(value || '').trim() || 'Checking for updates...';
                 setUpdatePhase('checking');
                 setUpdateLabel(message);
                 setUpdateProgress(null);
             }),
             window.api.onUpdateAvailable(() => {
+                clearUpdateTimers();
                 setUpdatePhase('downloading');
                 setUpdateLabel('Downloading update...');
             }),
             window.api.onDownloadProgress((value) => {
+                clearUpdateTimers();
                 const percentRaw = Number((value as { percent?: number } | null)?.percent);
                 const percent = Number.isFinite(percentRaw) ? Math.max(0, Math.min(100, percentRaw)) : null;
                 setUpdatePhase('downloading');
@@ -320,16 +336,27 @@ function App() {
                 setUpdateLabel(percent === null ? 'Downloading update...' : `Downloading update... ${Math.round(percent)}%`);
             }),
             window.api.onUpdateDownloaded(() => {
+                clearUpdateTimers();
                 setUpdatePhase('ready');
                 setUpdateLabel('Restart to update');
                 setUpdateProgress(100);
             }),
             window.api.onUpdateNotAvailable(() => {
-                setUpdatePhase('idle');
-                setUpdateLabel('');
+                clearUpdateTimers();
+                setUpdatePhase('up_to_date');
+                setUpdateLabel('Up to date');
                 setUpdateProgress(null);
+                updateDismissTimerRef.current = window.setTimeout(() => {
+                    setUpdatePhase('dismissing');
+                    updateHideTimerRef.current = window.setTimeout(() => {
+                        setUpdatePhase('idle');
+                        setUpdateLabel('');
+                        setUpdateProgress(null);
+                    }, 320);
+                }, 850);
             }),
             window.api.onUpdateError((value) => {
+                clearUpdateTimers();
                 const message = typeof value === 'string'
                     ? value
                     : String(value?.message || 'Update check failed');
@@ -340,25 +367,36 @@ function App() {
         ];
 
         return () => {
+            clearUpdateTimers();
             removeListeners.forEach((remove) => remove());
         };
     }, []);
 
     const showUpdateIndicator = updatePhase !== 'idle';
     const updateIndicatorText = updateLabel
-        || (updatePhase === 'checking' ? 'Checking for updates...' : updatePhase === 'downloading' ? 'Downloading update...' : updatePhase === 'ready' ? 'Restart to apply update' : 'Update error');
+        || (updatePhase === 'checking'
+            ? 'Checking for updates...'
+            : updatePhase === 'downloading'
+                ? 'Downloading update...'
+                : updatePhase === 'ready'
+                    ? 'Restart to apply update'
+                    : updatePhase === 'up_to_date' || updatePhase === 'dismissing'
+                        ? 'Up to date'
+                        : 'Update error');
     const updateShortLabel = updatePhase === 'checking'
         ? 'Checking'
         : updatePhase === 'downloading'
             ? (updateProgress !== null ? `${Math.round(updateProgress)}%` : 'Downloading')
             : updatePhase === 'ready'
                 ? 'Restart'
+                : updatePhase === 'up_to_date' || updatePhase === 'dismissing'
+                    ? 'Up to date'
                 : 'Error';
     const updateIndicatorClass = `update-indicator ${updatePhase === 'error'
         ? 'update-indicator--error'
         : updatePhase === 'ready'
             ? 'update-indicator--ready'
-            : ''}`;
+            : ''} ${updatePhase === 'dismissing' ? 'update-indicator--exit' : ''}`;
 
     const renderUpdateIndicator = () => {
         if (!showUpdateIndicator) return null;
@@ -372,6 +410,7 @@ function App() {
                     </span>
                 )}
                 {updatePhase === 'ready' && <span className="update-indicator__state bg-emerald-300" aria-hidden="true" />}
+                {(updatePhase === 'up_to_date' || updatePhase === 'dismissing') && <span className="update-indicator__state bg-emerald-300" aria-hidden="true" />}
                 {updatePhase === 'error' && <span className="update-indicator__state bg-rose-300" aria-hidden="true" />}
                 <span>{updateShortLabel}</span>
                 {updatePhase === 'downloading' && (

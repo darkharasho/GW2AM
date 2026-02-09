@@ -105,6 +105,11 @@ body {
   100% { opacity: 1; transform: translateX(0) scale(1); }
 }
 
+@keyframes updateBadgeExit {
+  0% { opacity: 1; transform: translateX(0) scale(1); }
+  100% { opacity: 0; transform: translateX(-24px) scale(0.9); }
+}
+
 @keyframes updatePulseRing {
   0% { transform: scale(0.8); opacity: 0.75; }
   80% { transform: scale(1.8); opacity: 0; }
@@ -151,6 +156,10 @@ body {
   background: linear-gradient(120deg, rgba(52, 211, 153, 0.08), rgba(52, 211, 153, 0.16));
   color: #bbf7d0;
   animation: updateBadgeEnter 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.update-indicator--exit {
+  animation: updateBadgeExit 280ms ease-in forwards;
 }
 
 .update-indicator__state {
