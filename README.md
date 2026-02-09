@@ -1,4 +1,4 @@
-# GW2 Account Manager
+# <img width="42" height="47" alt="GW2AM" src="https://github.com/user-attachments/assets/1c349236-c3ca-4f1a-9882-6d91b86a2c0d" /> GW2 Account Manager
 
 A desktop account launcher for Guild Wars 2 focused on speed, security, and clean multi-account workflow.
 
@@ -13,6 +13,9 @@ A desktop account launcher for Guild Wars 2 focused on speed, security, and clea
 - **Theme support**: switch visual themes from settings.
 - **GW2 API key support (optional)**: resolve account profile metadata in the UI.
 - **Built-in links**: quick access to project Discord and GitHub from settings.
+
+<img width="383" height="551" alt="image" src="https://github.com/user-attachments/assets/9ca66ffd-1bba-43b0-a01f-42698b21fee2" />
+
 
 ## Quick Start
 ### Install
