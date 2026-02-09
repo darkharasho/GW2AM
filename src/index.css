@@ -2,10 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar if needed */
+:root {
+  --theme-bg: #0f0c0b;
+  --theme-surface: #161313;
+  --theme-surface-soft: #211818;
+  --theme-border: #3d2a2a;
+  --theme-text: #efe6e1;
+  --theme-title: #e0d1cb;
+  --theme-text-muted: #b9a6a0;
+  --theme-text-dim: #9a8480;
+  --theme-input-bg: #110d0d;
+  --theme-accent: #7f201b;
+  --theme-accent-strong: #a8332a;
+  --theme-accent-soft: rgba(127, 32, 27, 0.2);
+  --theme-gold: #b88b58;
+  --theme-gold-strong: #d5a061;
+  --theme-control-bg: #2b1f1f;
+  --theme-control-hover: #342424;
+  --theme-danger-soft: #4a1f1a;
+  --theme-danger-text: #d47c74;
+  --theme-danger-text-hover: #f1b4ad;
+  --theme-active-border: #a8332a;
+  --theme-active-ring: rgba(168,51,42,0.5);
+  --theme-body-start: #110b0b;
+  --theme-glow-1: rgba(168, 51, 42, 0.12);
+  --theme-glow-2: rgba(127, 32, 27, 0.16);
+  --theme-overlay: rgba(0,0,0,0.4);
+}
+
 body {
-  @apply bg-gray-900 text-white overflow-hidden;
+  @apply text-white overflow-hidden;
+  background:
+    radial-gradient(circle at 20% 0%, var(--theme-glow-1), transparent 40%),
+    radial-gradient(circle at 80% 100%, var(--theme-glow-2), transparent 38%),
+    linear-gradient(180deg, var(--theme-body-start) 0%, var(--theme-bg) 100%);
   user-select: none;
+}
+
+/* Theme-aware scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--theme-control-hover) var(--theme-surface);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--theme-surface);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--theme-control-hover);
+  border: 2px solid var(--theme-surface);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-accent);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--theme-surface);
 }
 
 .draggable {
@@ -14,4 +74,27 @@ body {
 
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+.gw2am-mark {
+  position: absolute;
+  right: -220px;
+  bottom: -110px;
+  width: clamp(440px, 84vw, 840px);
+  aspect-ratio: 1 / 1;
+  pointer-events: none;
+  opacity: 0.2;
+  z-index: 5;
+  transform: scaleX(-1);
+  transform-origin: center;
+  background:
+    radial-gradient(circle at 30% 25%, var(--theme-gold-strong) 0%, var(--theme-accent) 48%, var(--theme-accent-strong) 100%);
+  -webkit-mask-image: url('/img/GW2AM.svg');
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-image: url('/img/GW2AM.svg');
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
 }

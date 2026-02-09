@@ -5,12 +5,13 @@
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "npm run build:electron && concurrently -k \"cross-env BROWSER=none npm run dev:web\" \"npm run electron\"",
+    "dev": "npm run build:electron && concurrently --handle-input --kill-others --kill-others-on-fail \"cross-env BROWSER=none npm run dev:web\" \"npm run electron\"",
+    "dev:birthday": "cross-env VITE_FORCE_BIRTHDAY=1 npm run dev",
     "dev:web": "vite",
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "electron": "wait-on tcp:5173 && electron .",
+    "electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "build:electron": "tsc -p tsconfig.electron.json",
     "electron:build": "npm run build:electron && vite build && electron-builder"
   },
@@ -44,7 +45,8 @@
     "appId": "com.gw2am.app",
     "productName": "GW2 Account Manager",
     "directories": {
-      "output": "dist-electron"
+      "output": "dist-electron",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -53,7 +55,11 @@
     ],
     "linux": {
       "target": "AppImage",
-      "category": "Game"
+      "category": "Game",
+      "icon": "build/icons/icon.png"
+    },
+    "win": {
+      "icon": "build/icons/icon.ico"
     }
   }
 }
