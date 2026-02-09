@@ -37,6 +37,9 @@ interface Api {
     checkForUpdates: () => void;
     restartApp: () => void;
     getAppVersion: () => Promise<string>;
+    getWhatsNew: () => Promise<{ version: string; releaseNotes: string }>;
+    shouldShowWhatsNew: () => Promise<{ version: string; shouldShow: boolean }>;
+    setLastSeenVersion: (version: string) => Promise<boolean>;
     onUpdateMessage: (callback: (value: string) => void) => () => void;
     onUpdateAvailable: (callback: (value: unknown) => void) => () => void;
     onUpdateNotAvailable: (callback: (value: unknown) => void) => () => void;

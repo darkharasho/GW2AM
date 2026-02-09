@@ -31,6 +31,9 @@ const automationPidsByAccount = new Map<string, Set<number>>();
 const launchStateMachine = new LaunchStateMachine();
 let persistWindowStateTimer: NodeJS.Timeout | null = null;
 let autoUpdateEnabled = false;
+const isDevFakeUpdate = process.env.GW2AM_DEV_FAKE_UPDATE === '1';
+const isDevFakeWhatsNew = process.env.GW2AM_DEV_FAKE_WHATS_NEW === '1' || isDevFakeUpdate;
+let fakeUpdateTimer: NodeJS.Timeout | null = null;
 
 log.transports.file.level = 'info';
 if (app.isPackaged) {
@@ -211,6 +214,32 @@ function setupAutoUpdater(): void {
 }
 
 async function checkForUpdates(reason: 'startup' | 'manual'): Promise<void> {
+  if (isDevFakeUpdate) {
+    if (fakeUpdateTimer) {
+      clearTimeout(fakeUpdateTimer);
+      fakeUpdateTimer = null;
+    }
+    sendUpdaterEvent('update-message', `Checking for update (${reason})...`);
+    fakeUpdateTimer = setTimeout(() => {
+      sendUpdaterEvent('update-available', { version: `${app.getVersion()}+fake` });
+      let percent = 0;
+      const interval = setInterval(() => {
+        percent = Math.min(100, percent + 20);
+        sendUpdaterEvent('download-progress', {
+          percent,
+          bytesPerSecond: 1500000,
+          transferred: Math.floor(percent * 1024 * 1024),
+          total: 100 * 1024 * 1024,
+        });
+        if (percent >= 100) {
+          clearInterval(interval);
+          sendUpdaterEvent('update-downloaded', { version: `${app.getVersion()}+fake` });
+        }
+      }, 350);
+    }, 900);
+    return;
+  }
+
   if (!autoUpdateEnabled) {
     sendUpdaterEvent('update-error', { message: 'Auto-updates are unavailable for this build.' });
     return;
@@ -1152,6 +1181,12 @@ app.on('ready', () => {
   autoUpdateEnabled = app.isPackaged && !isPortable && fs.existsSync(updateConfigPath);
   if (!autoUpdateEnabled) {
     log.info('[AutoUpdater] Disabled: no app-update.yml, unpackaged app, or portable build.');
+    if (isDevFakeUpdate) {
+      log.info('[AutoUpdater] Dev fake updater mode enabled.');
+      setTimeout(() => {
+        void checkForUpdates('startup');
+      }, 1800);
+    }
   } else {
     setupAutoUpdater();
     autoUpdater.autoDownload = true;
@@ -1204,11 +1239,69 @@ ipcMain.on('check-for-updates', () => {
 });
 
 ipcMain.on('restart-app', () => {
+  if (isDevFakeUpdate || !app.isPackaged) {
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
   autoUpdater.quitAndInstall();
 });
 
 ipcMain.handle('get-app-version', async () => {
   return app.getVersion();
+});
+
+ipcMain.handle('get-whats-new', async () => {
+  const version = app.getVersion();
+  if (isDevFakeWhatsNew) {
+    return {
+      version,
+      releaseNotes: `# Release Notes\n\nVersion v${version}\n\n## 🌟 Highlights\n- Fake update mode is active for local UI testing.\n\n## 🛠️ Improvements\n- Added a simulated updater flow (checking, downloading, restart).\n\n## 🧯 Fixes\n- What\\'s New can now be previewed without publishing a GitHub release.\n\n## ⚠️ Breaking Changes\n- None.`,
+    };
+  }
+  const tag = `v${version}`;
+  const releaseUrl = `https://api.github.com/repos/darkharasho/GW2AM/releases/tags/${tag}`;
+
+  try {
+    const resp = await fetch(releaseUrl, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'GW2AM-Updater',
+      },
+    });
+    if (resp.ok) {
+      const data = await resp.json() as { body?: string };
+      const body = String(data?.body || '').trim();
+      if (body) {
+        return { version, releaseNotes: body };
+      }
+    }
+  } catch {
+    // Fall back to local release notes if GitHub is unavailable.
+  }
+
+  try {
+    const basePath = app.isPackaged ? process.resourcesPath : process.cwd();
+    const notesPath = path.join(basePath, 'RELEASE_NOTES.md');
+    const releaseNotes = fs.readFileSync(notesPath, 'utf8').trim();
+    return { version, releaseNotes: releaseNotes || `Release notes unavailable for ${tag}.` };
+  } catch {
+    return { version, releaseNotes: `Release notes unavailable for ${tag}.` };
+  }
+});
+
+ipcMain.handle('should-show-whats-new', async () => {
+  const version = app.getVersion();
+  if (isDevFakeWhatsNew) {
+    return { version, shouldShow: true };
+  }
+  const lastSeenVersion = String(store.get('lastSeenVersion', '') || '');
+  return { version, shouldShow: lastSeenVersion !== version };
+});
+
+ipcMain.handle('set-last-seen-version', async (_event, version: string) => {
+  store.set('lastSeenVersion', String(version || '').trim());
+  return true;
 });
 
 // Security & Account Management

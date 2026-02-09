@@ -46,5 +46,8 @@ export type IpcEvents = {
     'has-master-password': () => Promise<boolean>;
     'should-prompt-master-password': () => Promise<boolean>;
     'get-app-version': () => Promise<string>;
+    'get-whats-new': () => Promise<{ version: string; releaseNotes: string }>;
+    'should-show-whats-new': () => Promise<{ version: string; shouldShow: boolean }>;
+    'set-last-seen-version': (version: string) => Promise<boolean>;
     'reset-app': () => void;
 }

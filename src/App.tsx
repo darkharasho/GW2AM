@@ -4,8 +4,9 @@ import AccountCard from './components/AccountCard.tsx';
 import AddAccountModal from './components/AddAccountModal.tsx';
 import MasterPasswordModal from './components/MasterPasswordModal.tsx';
 import SettingsModal from './components/SettingsModal.tsx';
+import WhatsNewScreen from './components/WhatsNewScreen.tsx';
 import { applyTheme } from './themes/applyTheme';
-import { Plus, Settings, Minus, Square, X, RefreshCw } from 'lucide-react';
+import { Plus, Settings, Minus, Square, X, RefreshCw, Sparkles } from 'lucide-react';
 
 type LaunchPhase = 'idle' | 'launch_requested' | 'launcher_started' | 'credentials_waiting' | 'credentials_submitted' | 'process_detected' | 'running' | 'stopping' | 'stopped' | 'errored';
 type LaunchCertainty = 'verified' | 'inferred';
@@ -32,9 +33,13 @@ function App() {
     const [updatePhase, setUpdatePhase] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'error' | 'up_to_date' | 'dismissing'>('idle');
     const [updateLabel, setUpdateLabel] = useState('');
     const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+    const [isWhatsNewOpen, setIsWhatsNewOpen] = useState(false);
+    const [whatsNewVersion, setWhatsNewVersion] = useState(appVersion);
+    const [whatsNewNotes, setWhatsNewNotes] = useState<string>('Loading release notes...');
     const processMissCountsRef = useRef<Record<string, number>>({});
     const updateDismissTimerRef = useRef<number | null>(null);
     const updateHideTimerRef = useRef<number | null>(null);
+    const autoWhatsNewCheckedRef = useRef(false);
 
     useEffect(() => {
         if (!window.api) {
@@ -459,6 +464,43 @@ function App() {
         if (window.api) window.api.closeWindow();
         else console.error('window.api is missing');
     };
+    const openWhatsNew = async (options?: { markSeen?: boolean }) => {
+        setIsWhatsNewOpen(true);
+        setWhatsNewNotes('Loading release notes...');
+        try {
+            const payload = await window.api.getWhatsNew();
+            const resolvedVersion = payload?.version || appVersion;
+            setWhatsNewVersion(resolvedVersion);
+            setWhatsNewNotes(payload?.releaseNotes || 'Release notes unavailable.');
+            if (options?.markSeen) {
+                await window.api.setLastSeenVersion(resolvedVersion);
+            }
+        } catch {
+            setWhatsNewVersion(appVersion);
+            setWhatsNewNotes('Release notes unavailable.');
+            if (options?.markSeen) {
+                await window.api.setLastSeenVersion(appVersion);
+            }
+        }
+    };
+
+    useEffect(() => {
+        if (!isUnlocked || autoWhatsNewCheckedRef.current || !window.api) return;
+        autoWhatsNewCheckedRef.current = true;
+
+        const maybeOpenWhatsNew = async () => {
+            try {
+                const state = await window.api.shouldShowWhatsNew();
+                if (state?.shouldShow) {
+                    await openWhatsNew({ markSeen: true });
+                }
+            } catch {
+                // ignore
+            }
+        };
+
+        void maybeOpenWhatsNew();
+    }, [isUnlocked]);
 
     if (isAuthChecking) {
         return (
@@ -471,6 +513,13 @@ function App() {
                         {renderUpdateIndicator()}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                        <button
+                            onClick={() => { void openWhatsNew(); }}
+                            className="p-1 hover:bg-[var(--theme-control-bg)] rounded transition-colors text-[var(--theme-text-muted)] hover:text-[var(--theme-text)]"
+                            title="What's New"
+                        >
+                            <Sparkles size={12} />
+                        </button>
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
                     </div>
                 </div>
@@ -490,6 +539,13 @@ function App() {
                         {renderUpdateIndicator()}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                        <button
+                            onClick={() => { void openWhatsNew(); }}
+                            className="p-1 hover:bg-[var(--theme-control-bg)] rounded transition-colors text-[var(--theme-text-muted)] hover:text-[var(--theme-text)]"
+                            title="What's New"
+                        >
+                            <Sparkles size={12} />
+                        </button>
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
                     </div>
                 </div>
@@ -514,6 +570,13 @@ function App() {
                     {renderUpdateIndicator()}
                 </span>
                 <div className="flex space-x-1 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                    <button
+                        onClick={() => { void openWhatsNew(); }}
+                        className="p-1 hover:bg-[var(--theme-control-bg)] rounded text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors"
+                        title="What's New"
+                    >
+                        <Sparkles size={13} />
+                    </button>
                     <button onClick={minimize} className="p-1 hover:bg-[var(--theme-control-bg)] rounded text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors"><Minus size={14} /></button>
                     <button onClick={maximize} className="p-1 hover:bg-[var(--theme-control-bg)] rounded text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors"><Square size={12} /></button>
                     <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded text-[var(--theme-text-muted)] hover:text-white transition-colors"><X size={14} /></button>
@@ -584,6 +647,14 @@ function App() {
                 isOpen={isSettingsOpen}
                 onClose={() => setIsSettingsOpen(false)}
             />
+
+            {isWhatsNewOpen && (
+                <WhatsNewScreen
+                    version={whatsNewVersion}
+                    releaseNotes={whatsNewNotes}
+                    onClose={() => setIsWhatsNewOpen(false)}
+                />
+            )}
         </div>
     );
 }

@@ -20,6 +20,12 @@ npm install
 npm run dev
 ```
 
+### Development Update Tester
+```bash
+npm run dev:update
+```
+Runs the app with a fake updater flow and fake What&apos;s New content so you can test update UI without publishing a release.
+
 ### Build for Production
 ```bash
 npm run electron:build

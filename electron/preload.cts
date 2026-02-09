@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('api', {
     checkForUpdates: () => ipcRenderer.send('check-for-updates'),
     restartApp: () => ipcRenderer.send('restart-app'),
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    getWhatsNew: () => ipcRenderer.invoke('get-whats-new'),
+    shouldShowWhatsNew: () => ipcRenderer.invoke('should-show-whats-new'),
+    setLastSeenVersion: (version: string) => ipcRenderer.invoke('set-last-seen-version', version),
     onUpdateMessage: (callback: (value: string) => void) => {
         const listener = (_event: Electron.IpcRendererEvent, value: string) => callback(value);
         ipcRenderer.on('update-message', listener);
