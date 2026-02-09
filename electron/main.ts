@@ -1310,7 +1310,20 @@ ipcMain.handle('open-external', async (_event, url: string) => {
   try {
     await shell.openExternal(target);
     return true;
-  } catch {
+  } catch (error) {
+    logMainWarn('external', `shell.openExternal failed for ${target}: ${error instanceof Error ? error.message : String(error)}`);
+    if (process.platform === 'linux') {
+      try {
+        const child = spawn('xdg-open', [target], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+        return true;
+      } catch (fallbackError) {
+        logMainError('external', `xdg-open fallback failed for ${target}: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+      }
+    }
     return false;
   }
 });
