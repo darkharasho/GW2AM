@@ -157,7 +157,16 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClose, onSa
                             className="w-full bg-[var(--theme-input-bg)] border border-[var(--theme-border)] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-[var(--theme-gold)] transition-colors text-sm select-text"
                             placeholder="-shareArchive -windowed -mapLoadinfo"
                         />
-                        <p className="text-xs text-[var(--theme-text-dim)] mt-1">Internal args like autologin/mumble/credentials are managed by the app.</p>
+                        <p className="text-xs text-[var(--theme-text-dim)] mt-1">
+                            Internal args like autologin/mumble/credentials are managed by the app.{' '}
+                            <button
+                                type="button"
+                                onClick={() => { void window.api.openExternal('https://wiki.guildwars2.com/wiki/Command_line_arguments'); }}
+                                className="underline text-[var(--theme-text)] hover:text-white transition-colors"
+                            >
+                                View all GW2 command line arguments
+                            </button>
+                        </p>
                     </div>
 
                     <div>
