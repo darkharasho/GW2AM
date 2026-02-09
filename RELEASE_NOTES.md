@@ -1,16 +1,17 @@
 # Release Notes
 
-Version v0.1.6 — February 9, 2026
+Version v0.2.0 — February 9, 2026
 
 ## 🌟 Highlights
-- Smoother update badge animation for smoother transitions.
-- Update indicator now shows a restart option and provides clearer feedback when updates are ready.
+- Added Discord and GitHub buttons with icons in Settings.
+- Enhanced update indicator with new states and subtle animations for clearer feedback.
 
 ## 🛠️ Improvements
-- Update label now reads "Restart to apply update" when an update is downloaded.
+- Polished AddAccountModal layout for easier account setup.
+- WhatsNew screen background blur improved for nicer visuals.
 
 ## 🧯 Fixes
-- None.
+- External links now open reliably on Linux, with a fallback option if needed.
 
 ## ⚠️ Breaking Changes
 - None.
