@@ -95,6 +95,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                         </p>
                     </div>
 
+                    <div>
+                        <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Community</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                onClick={() => { void window.api.openExternal('https://discord.gg/UjzMXMGXEg'); }}
+                                className="px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] text-[var(--theme-text)] transition-colors text-sm"
+                                title="Open Discord"
+                            >
+                                Discord
+                            </button>
+                            <button
+                                onClick={() => { void window.api.openExternal('https://github.com/darkharasho/GW2AM'); }}
+                                className="px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] text-[var(--theme-text)] transition-colors text-sm"
+                                title="Open GitHub"
+                            >
+                                GitHub
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="flex justify-end space-x-3 mt-6">
                         <button
                             onClick={onClose}

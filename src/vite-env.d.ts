@@ -40,6 +40,7 @@ interface Api {
     getWhatsNew: () => Promise<{ version: string; releaseNotes: string }>;
     shouldShowWhatsNew: () => Promise<{ version: string; shouldShow: boolean }>;
     setLastSeenVersion: (version: string) => Promise<boolean>;
+    openExternal: (url: string) => Promise<boolean>;
     onUpdateMessage: (callback: (value: string) => void) => () => void;
     onUpdateAvailable: (callback: (value: unknown) => void) => () => void;
     onUpdateNotAvailable: (callback: (value: unknown) => void) => () => void;

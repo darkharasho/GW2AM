@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -1302,6 +1302,17 @@ ipcMain.handle('should-show-whats-new', async () => {
 ipcMain.handle('set-last-seen-version', async (_event, version: string) => {
   store.set('lastSeenVersion', String(version || '').trim());
   return true;
+});
+
+ipcMain.handle('open-external', async (_event, url: string) => {
+  const target = String(url || '').trim();
+  if (!/^https?:\/\//i.test(target)) return false;
+  try {
+    await shell.openExternal(target);
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 // Security & Account Management

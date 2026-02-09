@@ -49,5 +49,6 @@ export type IpcEvents = {
     'get-whats-new': () => Promise<{ version: string; releaseNotes: string }>;
     'should-show-whats-new': () => Promise<{ version: string; shouldShow: boolean }>;
     'set-last-seen-version': (version: string) => Promise<boolean>;
+    'open-external': (url: string) => Promise<boolean>;
     'reset-app': () => void;
 }
