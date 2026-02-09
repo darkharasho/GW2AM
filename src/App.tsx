@@ -168,10 +168,6 @@ function App() {
     const handleLaunch = async (id: string) => {
         processMissCountsRef.current[id] = 0;
         setAccountStatuses((previous) => ({ ...previous, [id]: 'launching' }));
-        const account = accounts.find((entry) => entry.id === id);
-        if (account && (!Number.isFinite(account.playClickXPercent) || !Number.isFinite(account.playClickYPercent))) {
-            alert('No Play-click calibration is saved for this account yet. Click Play manually for this launch, then edit the account and use "Capture Play Click".');
-        }
         try {
             const launched = await window.api.launchAccount(id);
             if (!launched) {
