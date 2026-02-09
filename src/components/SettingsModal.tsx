@@ -39,7 +39,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     );
 
     return (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed left-0 right-0 bottom-0 top-9 z-50 border-t border-[var(--theme-border)]">
             <button className="absolute inset-0 bg-[var(--theme-overlay)] backdrop-blur-[1px]" onClick={onClose} aria-label="Close Settings Pane" />
             <div className="absolute right-0 top-0 h-full w-full max-w-md bg-[var(--theme-surface)] border-l border-[var(--theme-border)] shadow-2xl p-6 overflow-y-auto">
                 <div className="flex justify-between items-center mb-6 sticky top-0 bg-[var(--theme-surface)] py-1">
