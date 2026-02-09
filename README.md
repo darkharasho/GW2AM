@@ -27,11 +27,22 @@ npm run electron:build
 The executable will be generated in `dist_out` (e.g., AppImage or Setup.exe).
 
 ### Build + Publish GitHub Release
-Set `GITHUB_TOKEN` (or `GH_TOKEN`) and run:
+Set `GITHUB_TOKEN` (or `GH_TOKEN`) and `OPENAI_API_KEY`, then run:
 ```bash
 npm run build:github
 ```
 This builds desktop artifacts for Linux/Windows and uploads release assets to the GitHub release for `v<package.json version>`.
+
+To bump version automatically:
+```bash
+npm run build:github -- patch
+```
+This bumps and commits `package.json` + `package-lock.json`, generates AI release notes, commits `RELEASE_NOTES.md`, then builds/publishes.
+
+For non-interactive CI release notes approval, set:
+```bash
+RELEASE_NOTES_AUTO_APPROVE=1
+```
 
 ## Configuration
 - **Master Password**: Set on first launch. If lost, delete the app data to reset (all saved accounts will be lost).

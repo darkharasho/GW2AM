@@ -164,7 +164,7 @@ for (const file of files) {
   }
 }
 
-if (releaseData?.draft) {
+if (shouldDraft && releaseData?.draft) {
   const publishResp = await request('PATCH', `${baseUrl}/releases/${releaseId}`, { draft: false });
   if (!publishResp.ok) {
     console.error(`Failed to publish draft release ${tagName}.`);

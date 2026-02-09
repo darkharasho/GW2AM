@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const rootDir = process.cwd();
+const packageJsonPath = path.join(rootDir, 'package.json');
 
 const loadEnvFile = (filePath) => {
   if (!fs.existsSync(filePath)) return;
@@ -25,6 +26,13 @@ const loadEnvFile = (filePath) => {
 };
 
 loadEnvFile(path.join(rootDir, '.env'));
+
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+const outputDirName = packageJson?.build?.directories?.output || 'dist_out';
+const outputDir = path.join(rootDir, outputDirName);
+if (fs.existsSync(outputDir)) {
+  fs.rmSync(outputDir, { recursive: true, force: true });
+}
 
 const args = ['electron-builder', '--linux', '--win', '--publish', 'never'];
 const result = spawnSync('npx', args, { stdio: 'inherit', env: process.env });
