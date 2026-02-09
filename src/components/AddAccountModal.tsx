@@ -56,13 +56,23 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ isOpen, onClose, onSa
     };
 
     useEffect(() => {
-        if (isOpen && initialData) {
+        if (!isOpen) return;
+
+        if (initialData) {
             setNickname(initialData.nickname);
             setEmail(initialData.email);
             setPassword(''); // Don't show existing password for security? Or show placeholder
             setLaunchArguments(sanitizeLaunchArguments(initialData.launchArguments || ''));
             setApiKey(initialData.apiKey || '');
+            return;
         }
+
+        // Opening from "+" should always start with an empty form.
+        setNickname('');
+        setEmail('');
+        setPassword('');
+        setLaunchArguments('');
+        setApiKey('');
     }, [isOpen, initialData]);
 
     const handleSubmit = (e: React.FormEvent) => {
