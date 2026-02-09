@@ -60,7 +60,7 @@ if (!owner || !repo) {
 }
 
 const allowedAssetNames = new Set(['latest.yml', 'latest-linux.yml']);
-const allowedAssetExts = new Set(['.AppImage', '.exe', '.blockmap', '.yml']);
+const allowedAssetExts = new Set(['.AppImage', '.exe', '.blockmap']);
 const shouldIncludeAsset = (fileName) => {
   if (allowedAssetNames.has(fileName)) return true;
   return allowedAssetExts.has(path.extname(fileName));
@@ -69,18 +69,15 @@ const shouldIncludeAsset = (fileName) => {
 const collectReleaseFiles = (dir) => {
   if (!fs.existsSync(dir)) return [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
-  const files = [];
+  const filesByName = new Map();
   for (const entry of entries) {
-    const absPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectReleaseFiles(absPath));
-      continue;
-    }
+    // Only upload top-level artifacts from dist_out.
     if (!entry.isFile()) continue;
     if (!shouldIncludeAsset(entry.name)) continue;
-    files.push({ absPath, name: entry.name });
+    const absPath = path.join(dir, entry.name);
+    filesByName.set(entry.name, { absPath, name: entry.name });
   }
-  return files;
+  return Array.from(filesByName.values());
 };
 
 const request = async (method, url, body) => {

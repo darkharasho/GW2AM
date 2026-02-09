@@ -317,7 +317,7 @@ function App() {
             <div className="h-screen w-screen text-white flex flex-col">
                 <div className="h-8 bg-[var(--theme-surface)] border-b border-[var(--theme-border)] flex justify-between items-center px-2 select-none" style={{ WebkitAppRegion: 'drag' } as any}>
                     <span className="text-xs font-bold ml-2 flex items-center gap-2">
-                        <img src="/img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
+                        <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 Account Manager
                         <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
                     </span>
@@ -335,7 +335,7 @@ function App() {
                 {/* Custom Title Bar */}
                 <div className="h-8 bg-[var(--theme-surface)] border-b border-[var(--theme-border)] flex justify-between items-center px-2 select-none" style={{ WebkitAppRegion: 'drag' } as any}>
                     <span className="text-xs font-bold ml-2 flex items-center gap-2">
-                        <img src="/img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
+                        <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 Account Manager
                         <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
                     </span>
@@ -358,7 +358,7 @@ function App() {
             {/* Custom Title Bar */}
             <div className="h-9 bg-[var(--theme-surface)] flex justify-between items-center px-3 select-none border-b border-[var(--theme-border)] relative z-10" style={{ WebkitAppRegion: 'drag' } as any}>
                 <span className="text-sm font-bold text-[var(--theme-title)] flex items-center gap-2">
-                    <img src="/img/GW2AM.png" alt="GW2AM" className="w-5 h-5 object-contain" />
+                    <img src="img/GW2AM.png" alt="GW2AM" className="w-5 h-5 object-contain" />
                     GW2 Account Manager
                     <span className="text-[11px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
                 </span>
