@@ -1,15 +1,18 @@
 # Release Notes
 
-Version v0.1.2 — February 9, 2026
+Version v0.1.3 — February 9, 2026
 
 ## 🌟 Highlights
-None.
+- Packaging-aware logging to reduce console clutter in built apps.
+- More stable logging behavior when running as a packaged application.
 
 ## 🛠️ Improvements
-None.
+- Console logs are suppressed in packaged (built) mode to prevent terminal noise.
+- Improved resilience by handling console stream issues without crashing the app.
 
 ## 🧯 Fixes
-None.
+- Fixed potential crashes due to console/stream errors when the app is packaged.
+- Reduced console noise in packaged builds for a smoother user experience.
 
 ## ⚠️ Breaking Changes
 None.
