@@ -23,8 +23,8 @@ export default function WhatsNewScreen({ version, releaseNotes, onClose }: Whats
 
   return (
     <div
-      className="absolute left-0 right-0 bottom-0 top-9 z-[90] bg-black backdrop-blur-lg flex flex-col border-t border-[var(--theme-border)]"
-      style={{ WebkitAppRegion: 'no-drag' } as any}
+      className="absolute left-0 right-0 bottom-0 top-9 z-[90] backdrop-blur-md flex flex-col border-t border-[var(--theme-border)]"
+      style={{ WebkitAppRegion: 'no-drag', backgroundColor: 'rgba(0, 0, 0, 0.50)' } as any}
     >
       <div className="h-12 px-3 border-b border-[var(--theme-border)] flex items-center justify-between">
         <button
