@@ -1,58 +1,64 @@
-# Guild Wars 2 Account Manager
+# GW2 Account Manager
 
-A minimalist, secure account manager and launcher for Guild Wars 2.
+A desktop account launcher for Guild Wars 2 focused on speed, security, and clean multi-account workflow.
 
-## Feautres
-- **Secure Vault**: AES-256-GCM encryption for passwords.
-- **Multiple Accounts**: Manage unlimited accounts.
-- **Direct Launch**: Launch the game with specific arguments (e.g., `-nopatchui`, `-email`, `-password`).
-- **Minimalist UI**: Flat, dark theme designed to stay out of the way.
+## User Features
+- **Secure account vault**: credentials are encrypted locally with a master password.
+- **Multi-account management**: add, edit, and organize as many accounts as you need.
+- **One-click launch flow**: launch accounts through Steam integration with managed arguments.
+- **Per-account launch options**: keep custom launch args without manually retyping each session.
+- **Start/stop visibility**: clear running/launching/stopping status per account.
+- **Auto-updater UX**: animated update indicator, in-app restart when update is ready.
+- **What’s New screen**: first launch after update can show release notes in-app.
+- **Theme support**: switch visual themes from settings.
+- **GW2 API key support (optional)**: resolve account profile metadata in the UI.
+- **Built-in links**: quick access to project Discord and GitHub from settings.
 
-## Build & Run
-
-### Install Dependencies
+## Quick Start
+### Install
 ```bash
 npm install
 ```
 
-### Development Mode
+### Run in development
 ```bash
 npm run dev
 ```
 
-### Development Update Tester
+### Test update/What’s New flow locally
 ```bash
 npm run dev:update
 ```
-Runs the app with a fake updater flow and fake What&apos;s New content so you can test update UI without publishing a release.
 
-### Build for Production
+### Build desktop release locally
 ```bash
 npm run electron:build
 ```
-The executable will be generated in `dist_out` (e.g., AppImage or Setup.exe).
+Artifacts are generated in `dist_out`.
 
-### Build + Publish GitHub Release
-Set `GITHUB_TOKEN` (or `GH_TOKEN`) and `OPENAI_API_KEY`, then run:
+## Release Workflow
+### Build and publish GitHub release
+Set `GITHUB_TOKEN` (or `GH_TOKEN`) and `OPENAI_API_KEY`:
 ```bash
 npm run build:github
 ```
-This builds desktop artifacts for Linux/Windows and uploads release assets to the GitHub release for `v<package.json version>`.
 
-To bump version automatically:
+### Bump version + publish (patch/minor/major)
 ```bash
 npm run build:github -- patch
 ```
-This bumps and commits `package.json` + `package-lock.json`, generates AI release notes, commits `RELEASE_NOTES.md`, then builds/publishes.
+This flow bumps version, updates lockfile, generates AI release notes, commits release files, builds artifacts, and publishes release assets.
 
-For non-interactive CI release notes approval, set:
+### Non-interactive release notes approval
 ```bash
 RELEASE_NOTES_AUTO_APPROVE=1
 ```
 
 ## Configuration
-- **Master Password**: Set on first launch. If lost, delete the app data to reset (all saved accounts will be lost).
-- **Game Path**: Set the path to `Gw2-64.exe` in Settings. On Linux, this can be a wrapper script for Wine.
+- **Master Password**: set on first launch. If forgotten, resetting app data resets stored accounts.
+- **GW2 Path**: set path to `Gw2-64.exe` (Linux can use a wrapper script).
+- **Prompt cadence**: choose when the master password is required again.
 
-## Troubleshooting
-If launch fails, check the console output (in dev mode) or logs. Ensure the game path is correct.
+## Project Links
+- Discord: `https://discord.gg/UjzMXMGXEg`
+- GitHub: `https://github.com/darkharasho/GW2AM`
