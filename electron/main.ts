@@ -33,7 +33,41 @@ let persistWindowStateTimer: NodeJS.Timeout | null = null;
 let autoUpdateEnabled = false;
 const isDevFakeUpdate = process.env.GW2AM_DEV_FAKE_UPDATE === '1';
 const isDevFakeWhatsNew = process.env.GW2AM_DEV_FAKE_WHATS_NEW === '1' || isDevFakeUpdate;
+const isDevShowcase = process.env.GW2AM_DEV_SHOWCASE === '1';
 let fakeUpdateTimer: NodeJS.Timeout | null = null;
+const showcaseActiveAccounts = new Set<string>(['showcase-a']);
+const showcaseAccounts = [
+  {
+    id: 'showcase-a',
+    nickname: 'WvW Main',
+    email: 'wvw.main@example.com',
+    passwordEncrypted: '',
+    launchArguments: '-windowed -mapLoadinfo -fps 60',
+    apiKey: 'showcase-key-1',
+    apiAccountName: 'DarkHarasho.1234',
+    apiCreatedAt: '2018-03-12T10:05:00Z',
+  },
+  {
+    id: 'showcase-b',
+    nickname: 'PvE Alt',
+    email: 'pve.alt@example.com',
+    passwordEncrypted: '',
+    launchArguments: '-dx11 -windowed',
+    apiKey: 'showcase-key-2',
+    apiAccountName: 'LightHerald.5678',
+    apiCreatedAt: '2021-07-04T13:22:00Z',
+  },
+  {
+    id: 'showcase-c',
+    nickname: 'Raid Support',
+    email: 'raid.support@example.com',
+    passwordEncrypted: '',
+    launchArguments: '-windowed -shareArchive',
+    apiKey: 'showcase-key-3',
+    apiAccountName: 'QuickBoon.9012',
+    apiCreatedAt: '2019-11-21T18:44:00Z',
+  },
+] as const;
 
 log.transports.file.level = 'info';
 if (app.isPackaged) {
@@ -1330,6 +1364,7 @@ ipcMain.handle('open-external', async (_event, url: string) => {
 
 // Security & Account Management
 ipcMain.handle('has-master-password', async () => {
+  if (isDevShowcase) return true;
   return !!store.get('security_v2.salt');
 });
 
@@ -1352,6 +1387,7 @@ ipcMain.handle('set-master-password', async (_, password) => {
 });
 
 ipcMain.handle('verify-master-password', async (_, password) => {
+  if (isDevShowcase) return true;
   const salt = store.get('security_v2.salt');
   const storedHash = store.get('security_v2.validationHash');
 
@@ -1377,6 +1413,7 @@ ipcMain.handle('verify-master-password', async (_, password) => {
 });
 
 ipcMain.handle('should-prompt-master-password', async () => {
+  if (isDevShowcase) return false;
   return shouldPromptMasterPassword();
 });
 
@@ -1413,28 +1450,62 @@ ipcMain.handle('save-account', async (_, accountData) => {
 });
 
 ipcMain.handle('is-gw2-running', async () => {
+  if (isDevShowcase) return showcaseActiveAccounts.size > 0;
   return getRunningGw2Pids().length > 0;
 });
 
 ipcMain.handle('stop-gw2-process', async () => {
+  if (isDevShowcase) {
+    showcaseActiveAccounts.clear();
+    return true;
+  }
   return stopRunningGw2Processes();
 });
 
 ipcMain.handle('get-active-account-processes', async () => {
+  if (isDevShowcase) {
+    return showcaseAccounts
+      .filter((account) => showcaseActiveAccounts.has(account.id))
+      .map((account, index) => ({
+        accountId: account.id,
+        pid: 41000 + index,
+        mumbleName: getAccountMumbleName(account.id),
+      }));
+  }
   return getActiveAccountProcesses();
 });
 
 ipcMain.handle('get-launch-states', async () => {
+  if (isDevShowcase) {
+    return showcaseAccounts.map((account) => ({
+      accountId: account.id,
+      phase: showcaseActiveAccounts.has(account.id) ? 'running' : 'idle',
+      certainty: 'verified' as const,
+      updatedAt: Date.now(),
+      note: showcaseActiveAccounts.has(account.id) ? 'Showcase running state' : 'Showcase idle state',
+    }));
+  }
   return launchStateMachine.getAllStates();
 });
 
 
 
 ipcMain.handle('stop-account-process', async (_, accountId) => {
+  if (isDevShowcase) {
+    showcaseActiveAccounts.delete(String(accountId));
+    return true;
+  }
   return stopAccountProcess(accountId);
 });
 
 ipcMain.handle('resolve-account-profile', async (_, apiKey) => {
+  if (isDevShowcase) {
+    const lookup = showcaseAccounts.find((account) => account.apiKey === String(apiKey || '').trim());
+    return {
+      name: lookup?.apiAccountName || 'ShowcaseAccount.0000',
+      created: lookup?.apiCreatedAt || '2020-01-01T00:00:00Z',
+    };
+  }
   const token = String(apiKey || '').trim();
   if (!token) return { name: '', created: '' };
   try {
@@ -1501,6 +1572,9 @@ ipcMain.handle('update-account', async (_, id, accountData) => {
 });
 
 ipcMain.handle('get-accounts', async () => {
+  if (isDevShowcase) {
+    return showcaseAccounts;
+  }
   if (!masterKey) throw new Error('Master key not set');
   return store.get('accounts') || [];
 });
@@ -1515,6 +1589,11 @@ ipcMain.handle('delete-account', async (_, id) => {
 });
 
 ipcMain.handle('launch-account', async (_, id) => {
+  if (isDevShowcase) {
+    showcaseActiveAccounts.clear();
+    showcaseActiveAccounts.add(String(id));
+    return true;
+  }
   if (!masterKey) throw new Error('Master key not set');
 
   // Linux: prevent multiple instances
@@ -1615,5 +1694,12 @@ ipcMain.handle('save-settings', async (_, settings) => {
 });
 
 ipcMain.handle('get-settings', async () => {
+  if (isDevShowcase) {
+    return {
+      gw2Path: '/usr/bin/gw2-showcase',
+      masterPasswordPrompt: 'never',
+      themeId: 'blood_legion',
+    };
+  }
   return store.get('settings');
 });

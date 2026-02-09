@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "npm run build:electron && concurrently --handle-input --kill-others --kill-others-on-fail \"cross-env BROWSER=none npm run dev:web\" \"npm run electron\"",
     "dev:update": "cross-env GW2AM_DEV_FAKE_UPDATE=1 GW2AM_DEV_FAKE_WHATS_NEW=1 npm run dev",
+    "dev:showcase": "cross-env GW2AM_DEV_SHOWCASE=1 GW2AM_DEV_FAKE_WHATS_NEW=1 npm run dev",
     "dev:birthday": "cross-env VITE_FORCE_BIRTHDAY=1 npm run dev",
     "dev:web": "vite",
     "build": "tsc && vite build",

@@ -30,6 +30,12 @@ npm run dev
 npm run dev:update
 ```
 
+### Showcase mode (fake data for screenshots)
+```bash
+npm run dev:showcase
+```
+Starts with fake accounts, simulated running states, and fake updater/What&apos;s New content for demos and screenshots.
+
 ### Build desktop release locally
 ```bash
 npm run electron:build
