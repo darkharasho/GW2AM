@@ -5,7 +5,7 @@ import AddAccountModal from './components/AddAccountModal.tsx';
 import MasterPasswordModal from './components/MasterPasswordModal.tsx';
 import SettingsModal from './components/SettingsModal.tsx';
 import { applyTheme } from './themes/applyTheme';
-import { Plus, Settings, Minus, Square, X } from 'lucide-react';
+import { Plus, Settings, Minus, Square, X, RefreshCw } from 'lucide-react';
 
 type LaunchPhase = 'idle' | 'launch_requested' | 'launcher_started' | 'credentials_waiting' | 'credentials_submitted' | 'process_detected' | 'running' | 'stopping' | 'stopped' | 'errored';
 type LaunchCertainty = 'verified' | 'inferred';
@@ -29,6 +29,9 @@ function App() {
     const [editingAccount, setEditingAccount] = useState<Account | undefined>(undefined);
 
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [updatePhase, setUpdatePhase] = useState<'idle' | 'checking' | 'downloading' | 'ready' | 'error'>('idle');
+    const [updateLabel, setUpdateLabel] = useState('');
+    const [updateProgress, setUpdateProgress] = useState<number | null>(null);
     const processMissCountsRef = useRef<Record<string, number>>({});
 
     useEffect(() => {
@@ -295,6 +298,71 @@ function App() {
         };
     }, [isUnlocked]);
 
+    useEffect(() => {
+        if (!window.api) return;
+
+        const clearToIdle = () => {
+            window.setTimeout(() => {
+                setUpdatePhase((current) => (current === 'ready' ? 'idle' : current));
+                setUpdateLabel((current) => (current === 'Update ready' ? '' : current));
+                setUpdateProgress((current) => (current === 100 ? null : current));
+            }, 5000);
+        };
+
+        const removeListeners: Array<() => void> = [
+            window.api.onUpdateMessage((value) => {
+                const message = String(value || '').trim() || 'Checking for updates...';
+                setUpdatePhase('checking');
+                setUpdateLabel(message);
+                setUpdateProgress(null);
+            }),
+            window.api.onUpdateAvailable(() => {
+                setUpdatePhase('downloading');
+                setUpdateLabel('Downloading update...');
+            }),
+            window.api.onDownloadProgress((value) => {
+                const percentRaw = Number((value as { percent?: number } | null)?.percent);
+                const percent = Number.isFinite(percentRaw) ? Math.max(0, Math.min(100, percentRaw)) : null;
+                setUpdatePhase('downloading');
+                setUpdateProgress(percent);
+                setUpdateLabel(percent === null ? 'Downloading update...' : `Downloading update... ${Math.round(percent)}%`);
+            }),
+            window.api.onUpdateDownloaded(() => {
+                setUpdatePhase('ready');
+                setUpdateLabel('Update ready');
+                setUpdateProgress(100);
+                clearToIdle();
+            }),
+            window.api.onUpdateNotAvailable(() => {
+                setUpdatePhase('idle');
+                setUpdateLabel('');
+                setUpdateProgress(null);
+            }),
+            window.api.onUpdateError((value) => {
+                const message = typeof value === 'string'
+                    ? value
+                    : String(value?.message || 'Update check failed');
+                setUpdatePhase('error');
+                setUpdateLabel(message);
+                setUpdateProgress(null);
+            }),
+        ];
+
+        return () => {
+            removeListeners.forEach((remove) => remove());
+        };
+    }, []);
+
+    const showUpdateIndicator = updatePhase !== 'idle';
+    const updateIndicatorBaseClass = 'ml-2 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold';
+    const updateIndicatorClass = updatePhase === 'error'
+        ? `${updateIndicatorBaseClass} border-rose-500/40 bg-rose-500/10 text-rose-200`
+        : updatePhase === 'ready'
+            ? `${updateIndicatorBaseClass} border-emerald-500/40 bg-emerald-500/10 text-emerald-200`
+            : `${updateIndicatorBaseClass} border-sky-500/40 bg-sky-500/10 text-sky-200`;
+    const updateIndicatorText = updateLabel
+        || (updatePhase === 'checking' ? 'Checking for updates...' : updatePhase === 'downloading' ? 'Downloading update...' : updatePhase === 'ready' ? 'Update ready' : 'Update error');
+
     // Window controls
     const minimize = () => {
         console.log('Minimize clicked');
@@ -320,6 +388,18 @@ function App() {
                         <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 Account Manager
                         <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
+                        {showUpdateIndicator && (
+                            <span className={updateIndicatorClass} title={updateIndicatorText}>
+                                {updatePhase === 'error' ? (
+                                    <span className="h-2 w-2 rounded-full bg-rose-300 animate-pulse" />
+                                ) : updatePhase === 'ready' ? (
+                                    <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                                ) : (
+                                    <RefreshCw size={10} className="animate-spin" />
+                                )}
+                                <span>{updatePhase === 'downloading' && updateProgress !== null ? `${Math.round(updateProgress)}%` : updatePhase}</span>
+                            </span>
+                        )}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
@@ -338,6 +418,18 @@ function App() {
                         <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 Account Manager
                         <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
+                        {showUpdateIndicator && (
+                            <span className={updateIndicatorClass} title={updateIndicatorText}>
+                                {updatePhase === 'error' ? (
+                                    <span className="h-2 w-2 rounded-full bg-rose-300 animate-pulse" />
+                                ) : updatePhase === 'ready' ? (
+                                    <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                                ) : (
+                                    <RefreshCw size={10} className="animate-spin" />
+                                )}
+                                <span>{updatePhase === 'downloading' && updateProgress !== null ? `${Math.round(updateProgress)}%` : updatePhase}</span>
+                            </span>
+                        )}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
@@ -361,6 +453,18 @@ function App() {
                     <img src="img/GW2AM.png" alt="GW2AM" className="w-5 h-5 object-contain" />
                     GW2 Account Manager
                     <span className="text-[11px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
+                    {showUpdateIndicator && (
+                        <span className={updateIndicatorClass} title={updateIndicatorText}>
+                            {updatePhase === 'error' ? (
+                                <span className="h-2 w-2 rounded-full bg-rose-300 animate-pulse" />
+                            ) : updatePhase === 'ready' ? (
+                                <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                            ) : (
+                                <RefreshCw size={10} className="animate-spin" />
+                            )}
+                            <span>{updatePhase === 'downloading' && updateProgress !== null ? `${Math.round(updateProgress)}%` : updatePhase}</span>
+                        </span>
+                    )}
                 </span>
                 <div className="flex space-x-1 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
                     <button onClick={minimize} className="p-1 hover:bg-[var(--theme-control-bg)] rounded text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors"><Minus size={14} /></button>
