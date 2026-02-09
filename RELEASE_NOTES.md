@@ -1,19 +1,15 @@
 # Release Notes
 
-Version v0.1.4 — February 9, 2026
+Version v0.1.5 — February 9, 2026
 
 ## 🌟 Highlights
-- New update progress indicator appears in the app header.
-- Status updates show as: Checking for updates, Downloading, Update ready, or Update error.
-- While downloading, you’ll see a percentage progress and a spinning refresh icon.
+- Branding updated from "GW2 Account Manager" to "GW2 AM" in the app header.
 
 ## 🛠️ Improvements
-- App now listens for update-related events (messages, availability, progress, completion, and errors).
-- Update messages and status automatically reflect in the UI for clearer feedback.
-- When an update is downloaded, the indicator switches to a ready state with a green cue.
+- Added an animated update progress indicator to show checking, downloading, ready, and error states.
 
 ## 🧯 Fixes
-None.
+- None.
 
 ## ⚠️ Breaking Changes
-None.
+- None.
