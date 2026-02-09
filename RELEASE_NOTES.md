@@ -1,18 +1,19 @@
 # Release Notes
 
-Version v0.1.3 — February 9, 2026
+Version v0.1.4 — February 9, 2026
 
 ## 🌟 Highlights
-- Packaging-aware logging to reduce console clutter in built apps.
-- More stable logging behavior when running as a packaged application.
+- New update progress indicator appears in the app header.
+- Status updates show as: Checking for updates, Downloading, Update ready, or Update error.
+- While downloading, you’ll see a percentage progress and a spinning refresh icon.
 
 ## 🛠️ Improvements
-- Console logs are suppressed in packaged (built) mode to prevent terminal noise.
-- Improved resilience by handling console stream issues without crashing the app.
+- App now listens for update-related events (messages, availability, progress, completion, and errors).
+- Update messages and status automatically reflect in the UI for clearer feedback.
+- When an update is downloaded, the indicator switches to a ready state with a green cue.
 
 ## 🧯 Fixes
-- Fixed potential crashes due to console/stream errors when the app is packaged.
-- Reduced console noise in packaged builds for a smoother user experience.
+None.
 
 ## ⚠️ Breaking Changes
 None.
