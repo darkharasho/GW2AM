@@ -25,6 +25,39 @@ contextBridge.exposeInMainWorld('api', {
 
     saveSettings: (settings: AppSettings) => ipcRenderer.invoke('save-settings', settings),
     getSettings: () => ipcRenderer.invoke('get-settings'),
+    checkForUpdates: () => ipcRenderer.send('check-for-updates'),
+    restartApp: () => ipcRenderer.send('restart-app'),
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    onUpdateMessage: (callback: (value: string) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: string) => callback(value);
+        ipcRenderer.on('update-message', listener);
+        return () => ipcRenderer.removeListener('update-message', listener);
+    },
+    onUpdateAvailable: (callback: (value: unknown) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+        ipcRenderer.on('update-available', listener);
+        return () => ipcRenderer.removeListener('update-available', listener);
+    },
+    onUpdateNotAvailable: (callback: (value: unknown) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+        ipcRenderer.on('update-not-available', listener);
+        return () => ipcRenderer.removeListener('update-not-available', listener);
+    },
+    onUpdateError: (callback: (value: { message?: string } | string) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: { message?: string } | string) => callback(value);
+        ipcRenderer.on('update-error', listener);
+        return () => ipcRenderer.removeListener('update-error', listener);
+    },
+    onDownloadProgress: (callback: (value: unknown) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+        ipcRenderer.on('download-progress', listener);
+        return () => ipcRenderer.removeListener('download-progress', listener);
+    },
+    onUpdateDownloaded: (callback: (value: unknown) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+        ipcRenderer.on('update-downloaded', listener);
+        return () => ipcRenderer.removeListener('update-downloaded', listener);
+    },
 
     minimizeWindow: () => ipcRenderer.send('minimize-window'),
     maximizeWindow: () => ipcRenderer.send('maximize-window'),

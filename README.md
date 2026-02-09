@@ -24,7 +24,14 @@ npm run dev
 ```bash
 npm run electron:build
 ```
-The executable will be generated in `dist` (e.g., AppImage or Setup.exe).
+The executable will be generated in `dist_out` (e.g., AppImage or Setup.exe).
+
+### Build + Publish GitHub Release
+Set `GITHUB_TOKEN` (or `GH_TOKEN`) and run:
+```bash
+npm run build:github
+```
+This builds desktop artifacts for Linux/Windows and uploads release assets to the GitHub release for `v<package.json version>`.
 
 ## Configuration
 - **Master Password**: Set on first launch. If lost, delete the app data to reset (all saved accounts will be lost).

@@ -34,6 +34,15 @@ interface Api {
 
     saveSettings: (settings: AppSettings) => Promise<void>;
     getSettings: () => Promise<AppSettings | null>;
+    checkForUpdates: () => void;
+    restartApp: () => void;
+    getAppVersion: () => Promise<string>;
+    onUpdateMessage: (callback: (value: string) => void) => () => void;
+    onUpdateAvailable: (callback: (value: unknown) => void) => () => void;
+    onUpdateNotAvailable: (callback: (value: unknown) => void) => () => void;
+    onUpdateError: (callback: (value: { message?: string } | string) => void) => () => void;
+    onDownloadProgress: (callback: (value: unknown) => void) => () => void;
+    onUpdateDownloaded: (callback: (value: unknown) => void) => () => void;
 
     minimizeWindow: () => void;
     maximizeWindow: () => void;

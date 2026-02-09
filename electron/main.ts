@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import log from 'electron-log';
+import electronUpdaterPkg from 'electron-updater';
 import store from './store.js';
 import { deriveKey, encrypt, decrypt, generateSalt } from './crypto.js';
 import { spawn, spawnSync } from 'child_process';
@@ -11,6 +13,7 @@ import { LaunchStateMachine } from './launchStateMachine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const { autoUpdater } = electronUpdaterPkg;
 
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
@@ -27,6 +30,10 @@ let shutdownRequested = false;
 const automationPidsByAccount = new Map<string, Set<number>>();
 const launchStateMachine = new LaunchStateMachine();
 let persistWindowStateTimer: NodeJS.Timeout | null = null;
+let autoUpdateEnabled = false;
+
+log.transports.file.level = 'info';
+autoUpdater.logger = log;
 
 function logMain(scope: string, message: string): void {
   console.log(`[GW2AM][Main][${scope}] ${message}`);
@@ -156,6 +163,62 @@ function requestAppShutdown(source: string): void {
   setTimeout(() => {
     app.exit(0);
   }, 1200);
+}
+
+function sendUpdaterEvent(channel: string, payload?: unknown): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(channel, payload);
+}
+
+function setupAutoUpdater(): void {
+  autoUpdater.on('checking-for-update', () => {
+    log.info('[AutoUpdater] Checking for update...');
+    sendUpdaterEvent('update-message', 'Checking for update...');
+  });
+  autoUpdater.on('update-available', (info) => {
+    log.info('[AutoUpdater] Update available', info);
+    sendUpdaterEvent('update-available', info);
+  });
+  autoUpdater.on('update-not-available', (info) => {
+    log.info('[AutoUpdater] Update not available', info);
+    sendUpdaterEvent('update-not-available', info);
+  });
+  autoUpdater.on('error', (err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error(`[AutoUpdater] Error: ${message}`);
+    sendUpdaterEvent('update-error', { message });
+  });
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdaterEvent('download-progress', progress);
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('[AutoUpdater] Update downloaded', info);
+    sendUpdaterEvent('update-downloaded', info);
+  });
+}
+
+async function checkForUpdates(reason: 'startup' | 'manual'): Promise<void> {
+  if (!autoUpdateEnabled) {
+    sendUpdaterEvent('update-error', { message: 'Auto-updates are unavailable for this build.' });
+    return;
+  }
+
+  if (!app.isPackaged) {
+    log.info(`[AutoUpdater] Skipping ${reason} update check in development mode.`);
+    sendUpdaterEvent('update-not-available', { version: app.getVersion() });
+    return;
+  }
+
+  try {
+    await Promise.race([
+      autoUpdater.checkForUpdates(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Update check timed out after 30s')), 30000)),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log.error(`[AutoUpdater] ${reason} update check failed: ${message}`);
+    sendUpdaterEvent('update-error', { message });
+  }
 }
 
 process.on('SIGINT', () => requestAppShutdown('SIGINT'));
@@ -1070,6 +1133,20 @@ app.on('ready', () => {
     app.setAppUserModelId('com.gw2am.app');
   }
   createWindow();
+
+  const updateConfigPath = path.join(process.resourcesPath, 'app-update.yml');
+  const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE);
+  autoUpdateEnabled = app.isPackaged && !isPortable && fs.existsSync(updateConfigPath);
+  if (!autoUpdateEnabled) {
+    log.info('[AutoUpdater] Disabled: no app-update.yml, unpackaged app, or portable build.');
+  } else {
+    setupAutoUpdater();
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    setTimeout(() => {
+      void checkForUpdates('startup');
+    }, 3000);
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -1107,6 +1184,18 @@ ipcMain.on('reset-app', () => {
   store.clear();
   app.relaunch();
   app.exit();
+});
+
+ipcMain.on('check-for-updates', () => {
+  void checkForUpdates('manual');
+});
+
+ipcMain.on('restart-app', () => {
+  autoUpdater.quitAndInstall();
+});
+
+ipcMain.handle('get-app-version', async () => {
+  return app.getVersion();
 });
 
 // Security & Account Management

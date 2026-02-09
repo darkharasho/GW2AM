@@ -9,6 +9,10 @@
     "dev:birthday": "cross-env VITE_FORCE_BIRTHDAY=1 npm run dev",
     "dev:web": "vite",
     "build": "tsc && vite build",
+    "build:linux": "npm run build:electron && vite build && electron-builder --linux",
+    "build:win": "npm run build:electron && vite build && electron-builder --win",
+    "build:all": "npm run build:electron && vite build && electron-builder --linux --win",
+    "build:github": "node scripts/build-github.mjs",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
@@ -16,8 +20,10 @@
     "electron:build": "npm run build:electron && vite build && electron-builder"
   },
   "dependencies": {
+    "electron-log": "^5.4.3",
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^11.0.2",
+    "electron-updater": "^6.7.3",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
@@ -45,13 +51,21 @@
     "appId": "com.gw2am.app",
     "productName": "GW2 Account Manager",
     "directories": {
-      "output": "dist-electron",
+      "output": "dist_out",
       "buildResources": "build"
+    },
+    "artifactName": "GW2AM-${version}-${os}-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "darkharasho",
+      "repo": "GW2AM",
+      "releaseType": "draft"
     },
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "electron/**/*"
+      "package.json",
+      "README.md"
     ],
     "linux": {
       "target": "AppImage",
@@ -59,7 +73,15 @@
       "icon": "build/icons/icon.png"
     },
     "win": {
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "differentialPackage": true
     }
   }
 }
