@@ -301,14 +301,6 @@ function App() {
     useEffect(() => {
         if (!window.api) return;
 
-        const clearToIdle = () => {
-            window.setTimeout(() => {
-                setUpdatePhase((current) => (current === 'ready' ? 'idle' : current));
-                setUpdateLabel((current) => (current === 'Update ready' ? '' : current));
-                setUpdateProgress((current) => (current === 100 ? null : current));
-            }, 5000);
-        };
-
         const removeListeners: Array<() => void> = [
             window.api.onUpdateMessage((value) => {
                 const message = String(value || '').trim() || 'Checking for updates...';
@@ -329,9 +321,8 @@ function App() {
             }),
             window.api.onUpdateDownloaded(() => {
                 setUpdatePhase('ready');
-                setUpdateLabel('Update ready');
+                setUpdateLabel('Restart to update');
                 setUpdateProgress(100);
-                clearToIdle();
             }),
             window.api.onUpdateNotAvailable(() => {
                 setUpdatePhase('idle');
@@ -355,13 +346,13 @@ function App() {
 
     const showUpdateIndicator = updatePhase !== 'idle';
     const updateIndicatorText = updateLabel
-        || (updatePhase === 'checking' ? 'Checking for updates...' : updatePhase === 'downloading' ? 'Downloading update...' : updatePhase === 'ready' ? 'Update ready' : 'Update error');
+        || (updatePhase === 'checking' ? 'Checking for updates...' : updatePhase === 'downloading' ? 'Downloading update...' : updatePhase === 'ready' ? 'Restart to apply update' : 'Update error');
     const updateShortLabel = updatePhase === 'checking'
         ? 'Checking'
         : updatePhase === 'downloading'
             ? (updateProgress !== null ? `${Math.round(updateProgress)}%` : 'Downloading')
             : updatePhase === 'ready'
-                ? 'Ready'
+                ? 'Restart'
                 : 'Error';
     const updateIndicatorClass = `update-indicator ${updatePhase === 'error'
         ? 'update-indicator--error'
@@ -372,8 +363,8 @@ function App() {
     const renderUpdateIndicator = () => {
         if (!showUpdateIndicator) return null;
         const progressWidth = updateProgress === null ? 28 : Math.max(8, Math.min(100, Math.round(updateProgress)));
-        return (
-            <span className={updateIndicatorClass} title={updateIndicatorText}>
+        const content = (
+            <>
                 {(updatePhase === 'checking' || updatePhase === 'downloading') && (
                     <span className="update-indicator__state update-indicator__state--checking" aria-hidden="true">
                         <span className="update-indicator__ring" />
@@ -389,6 +380,26 @@ function App() {
                         <span className="update-indicator__progress-shimmer" />
                     </span>
                 )}
+            </>
+        );
+
+        if (updatePhase === 'ready') {
+            return (
+                <button
+                    type="button"
+                    className={`${updateIndicatorClass} cursor-pointer transition-transform hover:scale-[1.02] active:scale-[0.98]`}
+                    title={updateIndicatorText}
+                    style={{ WebkitAppRegion: 'no-drag' } as any}
+                    onClick={() => window.api?.restartApp()}
+                >
+                    {content}
+                </button>
+            );
+        }
+
+        return (
+            <span className={updateIndicatorClass} title={updateIndicatorText}>
+                {content}
             </span>
         );
     };
