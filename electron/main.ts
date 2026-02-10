@@ -954,6 +954,10 @@ log_automation() {
   printf '[gw2am-automation] %s\\n' "$1" >&2
 }
 
+# Read credentials from stdin (avoids /proc/environ exposure)
+IFS= read -r GW2_EMAIL
+IFS= read -r GW2_PASSWORD
+
 log_automation "script-start pid=$GW2_PID"
 credential_attempt_count=0
 max_credential_attempts=1
@@ -1137,15 +1141,15 @@ log_automation "script-finished timeout waiting for launcher interaction"
     ['-c', automationScript],
     {
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
         GW2_PID: String(pid),
-        GW2_EMAIL: email,
-        GW2_PASSWORD: password,
       },
     },
   );
+  // Pipe credentials via stdin so they never appear in /proc/<pid>/environ
+  automationProcess.stdin?.end(`${email}\n${password}\n`);
   automationProcess.stdout?.on('data', (buf) => {
     logMain('automation', `Linux automation stdout account=${accountId}: ${String(buf).trim()}`);
   });
