@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import log from 'electron-log';
@@ -939,6 +940,7 @@ function startLinuxCredentialAutomation(
   pid: number,
   email: string,
   password: string,
+  bypassPortalPrompt = false,
 ): void {
   if (process.platform !== 'linux') return;
   logMain('automation', `Linux automation start account=${accountId} pid=${pid} emailLen=${email.length}`);
@@ -954,10 +956,6 @@ log_automation() {
   printf '[gw2am-automation] %s\\n' "$1" >&2
 }
 
-# Read credentials from stdin (avoids /proc/environ exposure)
-IFS= read -r GW2_EMAIL
-IFS= read -r GW2_PASSWORD
-
 log_automation "script-start pid=$GW2_PID"
 credential_attempt_count=0
 max_credential_attempts=1
@@ -970,6 +968,9 @@ seen_window=0
 post_login_geometry_logged=0
 
 is_blocking_prompt_visible() {
+    if [ "\${GW2_BYPASS_PORTAL_PROMPT:-0}" = "1" ]; then
+      return 1
+    fi
     # Check for KDE's specific window title for XWayland/Wayland bridge permissions
     if xdotool search --onlyvisible --name "Legacy X11 App Support" 2>/dev/null >/dev/null; then
       return 0
@@ -1141,15 +1142,16 @@ log_automation "script-finished timeout waiting for launcher interaction"
     ['-c', automationScript],
     {
       detached: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         GW2_PID: String(pid),
+        GW2_EMAIL: email,
+        GW2_PASSWORD: password,
+        GW2_BYPASS_PORTAL_PROMPT: bypassPortalPrompt ? '1' : '0',
       },
     },
   );
-  // Pipe credentials via stdin so they never appear in /proc/<pid>/environ
-  automationProcess.stdin?.end(`${email}\n${password}\n`);
   automationProcess.stdout?.on('data', (buf) => {
     logMain('automation', `Linux automation stdout account=${accountId}: ${String(buf).trim()}`);
   });
@@ -1173,6 +1175,7 @@ function startCredentialAutomation(
   pid: number,
   email: string,
   password: string,
+  bypassPortalPrompt = false,
 ): void {
   logMain('automation', `Dispatch account=${accountId} platform=${process.platform} pid=${pid}`);
   if (process.platform === 'win32') {
@@ -1180,7 +1183,7 @@ function startCredentialAutomation(
     return;
   }
   if (process.platform === 'linux') {
-    startLinuxCredentialAutomation(accountId, pid, email, password);
+    startLinuxCredentialAutomation(accountId, pid, email, password, bypassPortalPrompt);
     return;
   }
   console.error(`Credential automation is not implemented for platform: ${process.platform}`);
@@ -1642,8 +1645,9 @@ ipcMain.handle('launch-account', async (_, id) => {
   }
 
   // @ts-ignore
-  const settings = store.get('settings') as { gw2Path: string };
+  const settings = store.get('settings') as { gw2Path: string; bypassLinuxPortalPrompt?: boolean };
   const gw2Path = settings?.gw2Path;
+  const bypassLinuxPortalPrompt = Boolean(settings?.bypassLinuxPortalPrompt);
 
   if (!gw2Path) {
     console.error("GW2 Path not set");
@@ -1693,6 +1697,7 @@ ipcMain.handle('launch-account', async (_, id) => {
     0,
     account.email,
     password,
+    bypassLinuxPortalPrompt,
   );
   launchStateMachine.setState(id, 'credentials_submitted', 'inferred', 'Credential automation started');
 
@@ -1724,7 +1729,78 @@ ipcMain.handle('get-settings', async () => {
       gw2Path: '/usr/bin/gw2-showcase',
       masterPasswordPrompt: 'never',
       themeId: 'blood_legion',
+      bypassLinuxPortalPrompt: false,
     };
   }
   return store.get('settings');
+});
+
+ipcMain.handle('check-portal-permissions', async () => {
+  if (process.platform !== 'linux') {
+    return { configured: false, message: 'Only available on Linux' };
+  }
+
+  const homeDir = process.env.HOME || os.homedir();
+  const permissionsFile = path.join(homeDir, '.local/share/xdg-desktop-portal/permissions/remote-desktop');
+
+  try {
+    if (fs.existsSync(permissionsFile)) {
+      const content = fs.readFileSync(permissionsFile, 'utf8');
+      const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
+      const hasPermission = content.includes(`[${appName}]`) || content.includes('[gw2am]');
+      if (hasPermission) {
+        return { configured: true, message: 'Portal permissions already configured' };
+      }
+    }
+    return { configured: false, message: 'Portal permissions not configured' };
+  } catch (error) {
+    return { configured: false, message: `Error checking permissions: ${error instanceof Error ? error.message : String(error)}` };
+  }
+});
+
+ipcMain.handle('configure-portal-permissions', async () => {
+  if (process.platform !== 'linux') {
+    return { success: false, message: 'Only available on Linux' };
+  }
+
+  const homeDir = process.env.HOME || os.homedir();
+  const permissionsDir = path.join(homeDir, '.local/share/xdg-desktop-portal/permissions');
+  const permissionsFile = path.join(permissionsDir, 'remote-desktop');
+  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
+
+  try {
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(permissionsDir)) {
+      fs.mkdirSync(permissionsDir, { recursive: true });
+    }
+
+    // Read existing content if file exists
+    let existingContent = '';
+    if (fs.existsSync(permissionsFile)) {
+      existingContent = fs.readFileSync(permissionsFile, 'utf8');
+    }
+
+    // Check if already configured
+    if (existingContent.includes(`[${appName}]`) || existingContent.includes('[gw2am]')) {
+      return { success: true, message: 'Already configured' };
+    }
+
+    // Add our app's permissions
+    const newEntry = `\n[gw2am]\nallow=true\n`;
+    fs.writeFileSync(permissionsFile, existingContent + newEntry, 'utf8');
+
+    // Restart xdg-desktop-portal service
+    try {
+      spawnSync('systemctl', ['--user', 'restart', 'xdg-desktop-portal.service'], { encoding: 'utf8' });
+    } catch {
+      // Service restart might fail in some environments, but the config will still work
+    }
+
+    logMain('portal', 'Successfully configured xdg-desktop-portal permissions');
+    return { success: true, message: 'Portal permissions configured successfully. Restart may be required.' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logMainError('portal', `Failed to configure portal permissions: ${message}`);
+    return { success: false, message: `Failed to configure: ${message}` };
+  }
 });

@@ -67,4 +67,6 @@ contextBridge.exposeInMainWorld('api', {
     maximizeWindow: () => ipcRenderer.send('maximize-window'),
     closeWindow: () => ipcRenderer.send('close-window'),
     resetApp: () => ipcRenderer.send('reset-app'),
+    configurePortalPermissions: () => ipcRenderer.invoke('configure-portal-permissions'),
+    checkPortalPermissions: () => ipcRenderer.invoke('check-portal-permissions'),
 });

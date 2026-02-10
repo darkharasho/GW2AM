@@ -35,10 +35,12 @@ Prioritized plan for keeping existing functionality while hardening against fail
 
 ### 4. Shell-escape credentials in the Linux bash script
 
-`xdotool type` receives email/password via env vars, but bash can still interpret special characters (`$`, backticks, `!`) during variable expansion.
+`xdotool type` receives email/password via env vars, which are visible in `/proc/<pid>/environ` to same-user processes for the lifetime of the automation script.
 
-- Pass credentials through a file descriptor or stdin pipe instead of env vars to avoid any shell interpretation
-- Alternatively, use `xdotool type --file <(printf '%s' "$GW2_PASSWORD")` to bypass expansion entirely
+- **Note:** Stdin pipe approach was attempted but has a race condition with `detached: true` child processes — `stdin.end()` flushes asynchronously and bash `read` can fail. Reverted to env vars which are reliable.
+- Credentials are properly double-quoted (`"$GW2_EMAIL"`) in the script, so shell metacharacters are safe
+- Remaining risk is limited: only same-user processes can read `/proc/environ`, and the automation process is short-lived (~72s max)
+- Future improvement: consider writing credentials to a tmpfs-backed temp file (deleted immediately after read) to avoid `/proc/environ` exposure entirely
 
 ### 5. Automation process timeout & cleanup
 

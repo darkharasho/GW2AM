@@ -13,6 +13,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [gw2Path, setGw2Path] = useState('');
     const [masterPasswordPrompt, setMasterPasswordPrompt] = useState<'every_time' | 'daily' | 'weekly' | 'monthly' | 'never'>('every_time');
     const [themeId, setThemeId] = useState('blood_legion');
+    const [bypassLinuxPortalPrompt, setBypassLinuxPortalPrompt] = useState(false);
+    const [portalConfigStatus, setPortalConfigStatus] = useState<{ configured: boolean; message: string } | null>(null);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -21,17 +23,36 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 setGw2Path(settings.gw2Path || '');
                 setMasterPasswordPrompt(settings.masterPasswordPrompt ?? 'every_time');
                 setThemeId(settings.themeId || 'blood_legion');
+                setBypassLinuxPortalPrompt(settings.bypassLinuxPortalPrompt ?? false);
             }
+        });
+        // Check portal configuration status
+        window.api.checkPortalPermissions().then((status) => {
+            setPortalConfigStatus(status);
         });
     }, [isOpen]);
 
     const handleSave = async () => {
         try {
-            await window.api.saveSettings({ gw2Path, masterPasswordPrompt, themeId });
+            await window.api.saveSettings({ gw2Path, masterPasswordPrompt, themeId, bypassLinuxPortalPrompt });
             applyTheme(themeId);
             onClose();
         } catch {
             showToast('Failed to save settings.');
+        }
+    };
+
+    const handleConfigurePortal = async () => {
+        try {
+            const result = await window.api.configurePortalPermissions();
+            if (result.success) {
+                showToast(result.message);
+                setPortalConfigStatus({ configured: true, message: result.message });
+            } else {
+                showToast(`Failed: ${result.message}`);
+            }
+        } catch {
+            showToast('Failed to configure portal permissions.');
         }
     };
 
@@ -105,6 +126,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                             {GW2_THEMES.find((theme) => theme.id === themeId)?.description}
                         </p>
                     </div>
+
+                    {portalConfigStatus && portalConfigStatus.message !== 'Only available on Linux' && (
+                        <div>
+                            <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Linux Automation (xdotool)</label>
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-[var(--theme-text)]">Bypass remote control prompt</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={bypassLinuxPortalPrompt}
+                                        onChange={(e) => setBypassLinuxPortalPrompt(e.target.checked)}
+                                        className="w-4 h-4 rounded"
+                                    />
+                                </div>
+                                {portalConfigStatus && (
+                                    <p className="text-xs text-[var(--theme-text-dim)]">
+                                        Status: {portalConfigStatus.configured ? '✓ Configured' : '✗ Not configured'}
+                                    </p>
+                                )}
+                                <button
+                                    onClick={handleConfigurePortal}
+                                    className="w-full px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] text-[var(--theme-text)] transition-colors text-sm"
+                                >
+                                    Configure Portal Permissions
+                                </button>
+                                <p className="text-xs text-[var(--theme-text-dim)]">
+                                    This configures xdg-desktop-portal to automatically allow GW2AM to control input without prompting.
+                                </p>
+                            </div>
+                        </div>
+                    )}
 
                     <div>
                         <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Community</label>

@@ -52,6 +52,8 @@ interface Api {
     maximizeWindow: () => void;
     closeWindow: () => void;
     resetApp: () => void;
+    configurePortalPermissions: () => Promise<{ success: boolean; message: string }>;
+    checkPortalPermissions: () => Promise<{ configured: boolean; message: string }>;
 }
 
 declare global {

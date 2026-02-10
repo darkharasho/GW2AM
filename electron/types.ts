@@ -23,6 +23,7 @@ export interface AppSettings {
     gw2Path: string;
     masterPasswordPrompt: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never';
     themeId: string;
+    bypassLinuxPortalPrompt?: boolean;
 }
 
 export type IpcEvents = {
@@ -51,4 +52,6 @@ export type IpcEvents = {
     'set-last-seen-version': (version: string) => Promise<boolean>;
     'open-external': (url: string) => Promise<boolean>;
     'reset-app': () => void;
+    'configure-portal-permissions': () => Promise<{ success: boolean; message: string }>;
+    'check-portal-permissions': () => Promise<{ configured: boolean; message: string }>;
 }
