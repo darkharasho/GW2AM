@@ -1,17 +1,16 @@
 # Release Notes
 
-Version v0.2.0 — February 9, 2026
+Version v0.2.1 — February 9, 2026
 
 ## 🌟 Highlights
-- Added Discord and GitHub buttons with icons in Settings.
-- Enhanced update indicator with new states and subtle animations for clearer feedback.
+- Showcase mode with fake data for demos and screenshots.
+- README refreshed with an image and clearer guidance.
 
 ## 🛠️ Improvements
-- Polished AddAccountModal layout for easier account setup.
-- WhatsNew screen background blur improved for nicer visuals.
+- Add a link to GW2 command line arguments directly in AddAccountModal.
 
 ## 🧯 Fixes
-- External links now open reliably on Linux, with a fallback option if needed.
+- Improve handling of initial data in AddAccountModal (prefill when editing, start fresh for new entries).
 
 ## ⚠️ Breaking Changes
 - None.
