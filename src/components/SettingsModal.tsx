@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Github } from 'lucide-react';
 import { GW2_THEMES } from '../themes/themes';
 import { applyTheme } from '../themes/applyTheme';
+import { showToast } from './Toast.tsx';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -25,9 +26,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     }, [isOpen]);
 
     const handleSave = async () => {
-        await window.api.saveSettings({ gw2Path, masterPasswordPrompt, themeId });
-        applyTheme(themeId);
-        onClose();
+        try {
+            await window.api.saveSettings({ gw2Path, masterPasswordPrompt, themeId });
+            applyTheme(themeId);
+            onClose();
+        } catch {
+            showToast('Failed to save settings.');
+        }
     };
 
     if (!isOpen) return null;

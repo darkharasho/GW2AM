@@ -6,6 +6,8 @@ import MasterPasswordModal from './components/MasterPasswordModal.tsx';
 import SettingsModal from './components/SettingsModal.tsx';
 import WhatsNewScreen from './components/WhatsNewScreen.tsx';
 import { applyTheme } from './themes/applyTheme';
+import { showToast, ToastContainer } from './components/Toast.tsx';
+import { withTimeout } from './ipcTimeout';
 import { Plus, Settings, Minus, Square, X, RefreshCw, Sparkles } from 'lucide-react';
 
 type LaunchPhase = 'idle' | 'launch_requested' | 'launcher_started' | 'credentials_waiting' | 'credentials_submitted' | 'process_detected' | 'running' | 'stopping' | 'stopped' | 'errored';
@@ -53,47 +55,65 @@ function App() {
     }, []);
 
     const checkMasterPassword = async () => {
-        const hasPassword = await window.api.hasMasterPassword();
-        if (hasPassword) {
-            const shouldPrompt = await window.api.shouldPromptMasterPassword();
-            if (shouldPrompt) {
-                setMasterPasswordMode('verify');
+        try {
+            const hasPassword = await withTimeout(window.api.hasMasterPassword(), 10_000, 'hasMasterPassword');
+            if (hasPassword) {
+                const shouldPrompt = await withTimeout(window.api.shouldPromptMasterPassword(), 10_000, 'shouldPromptMasterPassword');
+                if (shouldPrompt) {
+                    setMasterPasswordMode('verify');
+                } else {
+                    setIsUnlocked(true);
+                    await loadAccounts();
+                }
             } else {
-                setIsUnlocked(true);
-                await loadAccounts();
+                setMasterPasswordMode('set');
             }
-        } else {
-            setMasterPasswordMode('set');
+        } catch {
+            showToast('Failed to check authentication status.');
         }
     };
 
     const handleMasterPasswordSubmit = async (password: string) => {
         setMasterPasswordError('');
-        if (masterPasswordMode === 'set') {
-            await window.api.setMasterPassword(password);
-            setIsUnlocked(true);
-            loadAccounts();
-        } else {
-            const isValid = await window.api.verifyMasterPassword(password);
-            if (isValid) {
+        try {
+            if (masterPasswordMode === 'set') {
+                await withTimeout(window.api.setMasterPassword(password), 10_000, 'setMasterPassword');
                 setIsUnlocked(true);
                 loadAccounts();
             } else {
-                setMasterPasswordError('Invalid password');
+                const isValid = await withTimeout(window.api.verifyMasterPassword(password), 10_000, 'verifyMasterPassword');
+                if (isValid) {
+                    setIsUnlocked(true);
+                    loadAccounts();
+                } else {
+                    setMasterPasswordError('Invalid password');
+                }
             }
+        } catch {
+            showToast('Failed to verify master password.');
         }
     };
 
     const loadAccounts = async () => {
-        const loadedAccounts = await window.api.getAccounts();
-        setAccounts(loadedAccounts);
+        try {
+            const loadedAccounts = await withTimeout(window.api.getAccounts(), 10_000, 'getAccounts');
+            setAccounts(loadedAccounts);
+        } catch {
+            showToast('Failed to load accounts.');
+        }
     };
 
     const refreshActiveProcesses = async () => {
-        const [active, launchStates] = await Promise.all([
-            window.api.getActiveAccountProcesses(),
-            window.api.getLaunchStates() as Promise<LaunchStateInfo[]>,
-        ]);
+        let active: { accountId: string }[];
+        let launchStates: LaunchStateInfo[];
+        try {
+            [active, launchStates] = await Promise.all([
+                withTimeout(window.api.getActiveAccountProcesses(), 10_000, 'getActiveAccountProcesses'),
+                withTimeout(window.api.getLaunchStates(), 10_000, 'getLaunchStates') as Promise<LaunchStateInfo[]>,
+            ]);
+        } catch {
+            return;
+        }
         const rawActiveIds = active.map((processInfo) => processInfo.accountId);
         const rawActiveSet = new Set(rawActiveIds);
         const launchStateMap = new Map(launchStates.map((state) => [state.accountId, state] as const));
@@ -151,23 +171,31 @@ function App() {
     };
 
     const handleSaveAccount = async (accountData: Omit<Account, 'id'>) => {
-        if (editingAccount) {
-            await window.api.updateAccount(editingAccount.id, accountData);
-        } else {
-            await window.api.saveAccount(accountData);
+        try {
+            if (editingAccount) {
+                await withTimeout(window.api.updateAccount(editingAccount.id, accountData), 10_000, 'updateAccount');
+            } else {
+                await withTimeout(window.api.saveAccount(accountData), 10_000, 'saveAccount');
+            }
+            loadAccounts();
+            setEditingAccount(undefined);
+        } catch {
+            showToast('Failed to save account.');
         }
-        loadAccounts();
-        setEditingAccount(undefined);
     };
 
     const handleDeleteAccount = async (id: string) => {
-        await window.api.deleteAccount(id);
-        loadAccounts();
-        setAccountStatuses((previous) => {
-            const next = { ...previous };
-            delete next[id];
-            return next;
-        });
+        try {
+            await withTimeout(window.api.deleteAccount(id), 10_000, 'deleteAccount');
+            loadAccounts();
+            setAccountStatuses((previous) => {
+                const next = { ...previous };
+                delete next[id];
+                return next;
+            });
+        } catch {
+            showToast('Failed to delete account.');
+        }
     };
 
     const handleEditAccount = (account: Account) => {
@@ -179,16 +207,16 @@ function App() {
         processMissCountsRef.current[id] = 0;
         setAccountStatuses((previous) => ({ ...previous, [id]: 'launching' }));
         try {
-            const launched = await window.api.launchAccount(id);
+            const launched = await withTimeout(window.api.launchAccount(id), 60_000, 'launchAccount');
             if (!launched) {
                 setAccountStatuses((previous) => ({ ...previous, [id]: 'errored' }));
-                alert('GW2 did not report as launched for this account. Check Steam and launcher state.');
+                showToast('GW2 did not report as launched. Check Steam and launcher state.');
             } else {
                 setAccountStatuses((previous) => ({ ...previous, [id]: 'running' }));
             }
         } catch {
             setAccountStatuses((previous) => ({ ...previous, [id]: 'errored' }));
-            alert('Failed to launch GW2 for this account.');
+            showToast('Failed to launch GW2 for this account.');
         }
         setTimeout(() => {
             refreshActiveProcesses();
@@ -198,9 +226,14 @@ function App() {
     const handleStop = async (id: string) => {
         processMissCountsRef.current[id] = 0;
         setAccountStatuses((previous) => ({ ...previous, [id]: 'stopping' }));
-        const stopped = await window.api.stopAccountProcess(id);
-        if (!stopped) {
+        try {
+            const stopped = await withTimeout(window.api.stopAccountProcess(id), 15_000, 'stopAccountProcess');
+            if (!stopped) {
+                setAccountStatuses((previous) => ({ ...previous, [id]: 'errored' }));
+            }
+        } catch {
             setAccountStatuses((previous) => ({ ...previous, [id]: 'errored' }));
+            showToast('Failed to stop account process.');
         }
         setTimeout(() => {
             refreshActiveProcesses();
@@ -257,7 +290,7 @@ function App() {
             const resolvedEntries = await Promise.all(accountsWithApiKey.map(async (account) => {
                 try {
                     const token = (account.apiKey || '').trim();
-                    const profile = await window.api.resolveAccountProfile(token);
+                    const profile = await withTimeout(window.api.resolveAccountProfile(token), 15_000, 'resolveAccountProfile');
                     return [account.id, profile.name, profile.created] as const;
                 } catch {
                     return [account.id, '', ''] as const;
@@ -523,6 +556,7 @@ function App() {
                         <button onClick={close} className="p-1 hover:bg-[var(--theme-accent)] rounded transition-colors"><X size={12} /></button>
                     </div>
                 </div>
+                <ToastContainer />
             </div>
         );
     }
@@ -554,6 +588,7 @@ function App() {
                     onSubmit={handleMasterPasswordSubmit}
                     error={masterPasswordError}
                 />
+                <ToastContainer />
             </div>
         );
     }
@@ -655,6 +690,8 @@ function App() {
                     onClose={() => setIsWhatsNewOpen(false)}
                 />
             )}
+
+            <ToastContainer />
         </div>
     );
 }
