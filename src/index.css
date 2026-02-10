@@ -80,12 +80,12 @@ body {
   position: absolute;
   right: -220px;
   bottom: -110px;
-  width: clamp(440px, 84vw, 840px);
+  width: clamp(550px, 105vw, 1050px);
   aspect-ratio: 1 / 1;
   pointer-events: none;
   opacity: 0.2;
   z-index: 5;
-  transform: scaleX(-1);
+  transform: translateY(20%) scaleX(-1);
   transform-origin: center;
   background:
     radial-gradient(circle at 30% 25%, var(--theme-gold-strong) 0%, var(--theme-accent) 48%, var(--theme-accent-strong) 100%);
