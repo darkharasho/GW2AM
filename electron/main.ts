@@ -1735,6 +1735,12 @@ ipcMain.handle('get-settings', async () => {
   return store.get('settings');
 });
 
+ipcMain.handle('get-runtime-flags', async () => {
+  return {
+    isDevShowcase,
+  };
+});
+
 ipcMain.handle('check-portal-permissions', async () => {
   if (process.platform !== 'linux') {
     return { configured: false, message: 'Only available on Linux' };

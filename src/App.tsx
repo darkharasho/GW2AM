@@ -17,6 +17,9 @@ type LaunchStateInfo = { accountId: string; phase: LaunchPhase; certainty: Launc
 function App() {
     const ACTIVE_PROCESS_MISS_THRESHOLD = 3;
     const appVersion = __APP_VERSION__;
+    const isDev = import.meta.env.DEV;
+    const [isShowcaseMode, setIsShowcaseMode] = useState(false);
+    const showDevChrome = isDev && !isShowcaseMode;
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [activeAccountIds, setActiveAccountIds] = useState<string[]>([]);
     const [accountApiNames, setAccountApiNames] = useState<Record<string, string>>({});
@@ -48,6 +51,11 @@ function App() {
             alert("FATAL: window.api is missing! IPC broken.");
             return;
         }
+        window.api.getRuntimeFlags().then((flags) => {
+            setIsShowcaseMode(Boolean(flags?.isDevShowcase));
+        }).catch(() => {
+            setIsShowcaseMode(false);
+        });
         window.api.getSettings().then((settings) => {
             applyTheme(settings?.themeId || 'blood_legion');
         });
@@ -538,11 +546,16 @@ function App() {
     if (isAuthChecking) {
         return (
             <div className="h-screen w-screen text-white flex flex-col">
-                <div className="h-8 bg-[var(--theme-surface)] border-b border-[var(--theme-border)] flex justify-between items-center px-2 select-none" style={{ WebkitAppRegion: 'drag' } as any}>
+                <div className={`h-8 bg-[var(--theme-surface)] border-b flex justify-between items-center px-2 select-none ${showDevChrome ? 'border-[#f59e0b]' : 'border-[var(--theme-border)]'}`} style={{ WebkitAppRegion: 'drag' } as any}>
                     <span className="text-xs font-bold ml-2 flex items-center gap-2">
                         <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 AM
-                        <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
+                        {showDevChrome ? (
+                            <span className="ml-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.3em] text-amber-300">
+                                Dev Build
+                            </span>
+                        ) : null}
+                        {!showDevChrome ? <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span> : null}
                         {renderUpdateIndicator()}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
@@ -565,11 +578,16 @@ function App() {
         return (
             <div className="h-screen w-screen text-white flex flex-col">
                 {/* Custom Title Bar */}
-                <div className="h-8 bg-[var(--theme-surface)] border-b border-[var(--theme-border)] flex justify-between items-center px-2 select-none" style={{ WebkitAppRegion: 'drag' } as any}>
+                <div className={`h-8 bg-[var(--theme-surface)] border-b flex justify-between items-center px-2 select-none ${showDevChrome ? 'border-[#f59e0b]' : 'border-[var(--theme-border)]'}`} style={{ WebkitAppRegion: 'drag' } as any}>
                     <span className="text-xs font-bold ml-2 flex items-center gap-2">
                         <img src="img/GW2AM.png" alt="GW2AM" className="w-4 h-4 object-contain" />
                         GW2 AM
-                        <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
+                        {showDevChrome ? (
+                            <span className="ml-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.3em] text-amber-300">
+                                Dev Build
+                            </span>
+                        ) : null}
+                        {!showDevChrome ? <span className="text-[10px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span> : null}
                         {renderUpdateIndicator()}
                     </span>
                     <div className="flex space-x-2 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>
@@ -594,14 +612,19 @@ function App() {
     }
 
     return (
-        <div className="h-screen w-screen text-white flex flex-col overflow-hidden border border-[var(--theme-border)] relative">
+        <div className={`h-screen w-screen text-white flex flex-col overflow-hidden border relative ${showDevChrome ? 'border-[#f59e0b]' : 'border-[var(--theme-border)]'}`}>
             <div className="gw2am-mark" aria-hidden="true" />
             {/* Custom Title Bar */}
-            <div className="h-9 bg-[var(--theme-surface)] flex justify-between items-center px-3 select-none border-b border-[var(--theme-border)] relative z-10" style={{ WebkitAppRegion: 'drag' } as any}>
+            <div className={`h-9 bg-[var(--theme-surface)] flex justify-between items-center px-3 select-none border-b relative z-10 ${showDevChrome ? 'border-[#f59e0b]' : 'border-[var(--theme-border)]'}`} style={{ WebkitAppRegion: 'drag' } as any}>
                 <span className="text-sm font-bold text-[var(--theme-title)] flex items-center gap-2">
                     <img src="img/GW2AM.png" alt="GW2AM" className="w-5 h-5 object-contain" />
                     GW2 AM
-                    <span className="text-[11px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span>
+                    {showDevChrome ? (
+                        <span className="ml-1 rounded-full border border-amber-500/50 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.3em] text-amber-300">
+                            Dev Build
+                        </span>
+                    ) : null}
+                    {!showDevChrome ? <span className="text-[11px] font-normal text-[var(--theme-text-dim)]">v{appVersion}</span> : null}
                     {renderUpdateIndicator()}
                 </span>
                 <div className="flex space-x-1 relative z-50" style={{ WebkitAppRegion: 'no-drag' } as any}>

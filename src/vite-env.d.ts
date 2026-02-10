@@ -34,6 +34,7 @@ interface Api {
 
     saveSettings: (settings: AppSettings) => Promise<void>;
     getSettings: () => Promise<AppSettings | null>;
+    getRuntimeFlags: () => Promise<{ isDevShowcase: boolean }>;
     checkForUpdates: () => void;
     restartApp: () => void;
     getAppVersion: () => Promise<string>;
