@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -29,6 +29,31 @@ const STEAM_GW2_APP_ID = '1284210';
 let shutdownRequested = false;
 const automationPidsByAccount = new Map<string, Set<number>>();
 const launchStateMachine = new LaunchStateMachine();
+
+const SAFE_STORAGE_PREFIX = 'safe:';
+
+function encryptForStorage(key: Buffer): string {
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = safeStorage.encryptString(key.toString('hex'));
+    return SAFE_STORAGE_PREFIX + encrypted.toString('base64');
+  }
+  log.warn('safeStorage encryption not available — falling back to plaintext key cache');
+  return key.toString('hex');
+}
+
+function decryptFromStorage(stored: string): Buffer | null {
+  try {
+    if (stored.startsWith(SAFE_STORAGE_PREFIX)) {
+      const encrypted = Buffer.from(stored.slice(SAFE_STORAGE_PREFIX.length), 'base64');
+      const hex = safeStorage.decryptString(encrypted);
+      return Buffer.from(hex, 'hex');
+    }
+    // Legacy plaintext hex — read as-is
+    return Buffer.from(stored, 'hex');
+  } catch {
+    return null;
+  }
+}
 let persistWindowStateTimer: NodeJS.Timeout | null = null;
 let autoUpdateEnabled = false;
 const isDevFakeUpdate = process.env.GW2AM_DEV_FAKE_UPDATE === '1';
@@ -701,16 +726,12 @@ function shouldPromptMasterPassword(): boolean {
   const mode = settings?.masterPasswordPrompt ?? 'every_time';
 
   if (!masterKey && mode === 'never') {
-    const cachedMasterKeyHex = String(store.get('security_v2.cachedMasterKey') || '');
-    if (cachedMasterKeyHex) {
-      try {
-        const restored = Buffer.from(cachedMasterKeyHex, 'hex');
-        if (restored.length > 0) {
-          masterKey = restored;
-          return false;
-        }
-      } catch {
-        // fall back to prompting
+    const cachedValue = String(store.get('security_v2.cachedMasterKey') || '');
+    if (cachedValue) {
+      const restored = decryptFromStorage(cachedValue);
+      if (restored && restored.length > 0) {
+        masterKey = restored;
+        return false;
       }
     }
   }
@@ -1378,7 +1399,7 @@ ipcMain.handle('set-master-password', async (_, password) => {
   store.set('security_v2.lastUnlockAt', Date.now());
   const settings = store.get('settings') as { masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never' } | undefined;
   if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
-    store.set('security_v2.cachedMasterKey', key.toString('hex'));
+    store.set('security_v2.cachedMasterKey', encryptForStorage(key));
   } else {
     store.set('security_v2.cachedMasterKey', '');
   }
@@ -1403,7 +1424,7 @@ ipcMain.handle('verify-master-password', async (_, password) => {
     store.set('security_v2.lastUnlockAt', Date.now());
     const settings = store.get('settings') as { masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never' } | undefined;
     if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
-      store.set('security_v2.cachedMasterKey', key.toString('hex'));
+      store.set('security_v2.cachedMasterKey', encryptForStorage(key));
     } else {
       store.set('security_v2.cachedMasterKey', '');
     }
@@ -1686,7 +1707,7 @@ ipcMain.handle('save-settings', async (_, settings) => {
   store.set('settings', settings);
   if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
     if (masterKey) {
-      store.set('security_v2.cachedMasterKey', masterKey.toString('hex'));
+      store.set('security_v2.cachedMasterKey', encryptForStorage(masterKey));
     }
   } else {
     store.set('security_v2.cachedMasterKey', '');
