@@ -88,7 +88,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                             />
                         </div>
                         <p className="text-xs text-[var(--theme-text-dim)] mt-1">Full path to the executable (e.g. C:\Games\Guild Wars 2\Gw2-64.exe or /usr/bin/gw2)</p>
-                        <p className="text-xs text-[var(--theme-text-dim)] mt-1">If this is a Steam install, keep it pointed at your GW2 executable; launch still goes through Steam.</p>
+                        <p className="text-xs text-[var(--theme-text-dim)] mt-1">If set, launch uses this executable directly. If empty, launch defaults to Steam.</p>
                     </div>
 
                     <div>

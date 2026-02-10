@@ -340,7 +340,7 @@ function App() {
         refreshActiveProcesses();
         const timer = window.setInterval(() => {
             refreshActiveProcesses();
-        }, 2000);
+        }, 3000);
         return () => {
             window.clearInterval(timer);
         };
