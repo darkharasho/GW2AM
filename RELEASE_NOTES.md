@@ -1,18 +1,16 @@
 # Release Notes
 
-Version v0.3.0 — February 10, 2026
+Version v0.3.1 — February 10, 2026
 
 ## 🌟 Highlights
-- OS-specific credential automation flows for Windows and Linux.
-- Auto-login now uses a wait period after the launcher appears to boost reliability.
+- Added a visual loading state on the Account Card to indicate when a game launch is in progress.
 
 ## 🛠️ Improvements
-- Launch automation is now split per OS, with OS-specific handling.
-- Reduced retry attempts for login when the game is fullscreen to avoid extra spins.
+- The Launch button now shows a loading spinner during launching, replacing the usual icon.
+- Actions are disabled while an operation is in progress and titles reflect the current state (Launching/Stopping).
 
 ## 🧯 Fixes
-- Linux: improved launch reliability and popup suppression during auto-login.
-- Windows: credential automation now performs a single-pass login after focusing the password field.
+- None.
 
 ## ⚠️ Breaking Changes
-- Linux automation now requires xdotool; install it to enable auto-login.
+- None.
