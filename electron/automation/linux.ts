@@ -26,11 +26,14 @@ log_automation() {
 log_automation "script-start pid=$GW2_PID"
 credential_attempt_count=0
 max_credential_attempts=1
-credentials_submitted_epoch=0
-play_click_not_before_epoch=0
+credential_delay_after_window_detect_ms=7000
+window_detected_ms=0
+last_credential_wait_log_ms=0
+credentials_submitted_ms=0
+play_click_not_before_ms=0
 play_attempt_count=0
 max_play_attempts=1
-last_play_attempt_epoch=0
+last_play_attempt_ms=0
 seen_window=0
 post_login_geometry_logged=0
 
@@ -94,47 +97,9 @@ is_blocking_prompt_visible() {
     sleep 0.05
   }
 
-  focus_login_field() {
-    local field_name="$1"
-    local target_x target_y
-    eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
-    if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
-      return 1
-    fi
-
-    target_x=$((WIDTH / 2))
-    # Launcher login fields are typically in the mid-lower section.
-    if [ "$field_name" = "email" ]; then
-      target_y=$((HEIGHT * 58 / 100))
-    else
-      target_y=$((HEIGHT * 65 / 100))
-    fi
-
-    # Keep clicks away from the very edges for tiny or oddly scaled windows.
-    if [ "$target_y" -lt 90 ]; then
-      target_y=90
-    fi
-    if [ "$target_y" -gt $((HEIGHT - 90)) ]; then
-      target_y=$((HEIGHT - 90))
-    fi
-
-    xdotool mousemove --window "$win_id" "$target_x" "$target_y" click 1
-    sleep 0.12
-    log_automation "focus-$field_name via mouse x=$target_x y=$target_y win_w=$WIDTH win_h=$HEIGHT"
-    return 0
-  }
-
-  submit_credentials() {
-    # Settle focus and dismiss incidental overlays/tooltips first.
+  submit_credentials_once() {
     xdotool key --clearmodifiers --window "$win_id" Escape 2>/dev/null || true
-    sleep 0.08
-
-    if ! focus_login_field "email"; then
-      # Fallback path when geometry probing/click targeting fails.
-      xdotool key --clearmodifiers --window "$win_id" Shift+Tab
-      sleep 0.08
-      log_automation "focus-email fallback=Shift+Tab"
-    fi
+    sleep 0.05
     clear_focused_input
     xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_EMAIL"
     sleep 0.12
@@ -142,11 +107,11 @@ is_blocking_prompt_visible() {
     # Prefer form-native traversal from email -> password.
     xdotool key --clearmodifiers --window "$win_id" Tab
     sleep 0.10
-    log_automation "focus-password via Tab"
     clear_focused_input
     xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_PASSWORD"
     sleep 0.16
     xdotool key --clearmodifiers --window "$win_id" Return
+    log_automation "credentials-submitted"
     return 0
   }
 
@@ -186,8 +151,10 @@ is_blocking_prompt_visible() {
           log_automation "window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
         fi
         seen_window=1
+        window_detected_ms="$(date +%s%3N)"
+        log_automation "credentials-delay-start wait_ms=$credential_delay_after_window_detect_ms"
       fi
-      now_epoch="$(date +%s)"
+      now_epoch_ms="$(date +%s%3N)"
 
       xdotool windowraise "$win_id" 2>/dev/null || true
       xdotool windowactivate --sync "$win_id"
@@ -198,31 +165,39 @@ is_blocking_prompt_visible() {
       fi
 
       if [ "$credential_attempt_count" -lt "$max_credential_attempts" ]; then
-      # Single fixed wait so controls are writable; no retry/backoff typing loop.
-      sleep 2
-      active_id="$(xdotool getactivewindow 2>/dev/null || true)"
-      if [ "$active_id" != "$win_id" ]; then
+      if [ "$window_detected_ms" -eq 0 ]; then
         continue
       fi
 
-      submit_credentials || true
+      credentials_wait_elapsed_ms=$((now_epoch_ms - window_detected_ms))
+      if [ "$credentials_wait_elapsed_ms" -lt "$credential_delay_after_window_detect_ms" ]; then
+        if [ $((now_epoch_ms - last_credential_wait_log_ms)) -ge 2000 ]; then
+          log_automation "waiting-before-credentials elapsed_ms=$credentials_wait_elapsed_ms target_ms=$credential_delay_after_window_detect_ms"
+          last_credential_wait_log_ms="$now_epoch_ms"
+        fi
+        continue
+      fi
+
+      if ! submit_credentials_once; then
+        continue
+      fi
       sleep 3
 
       credential_attempt_count=$((credential_attempt_count + 1))
-      credentials_submitted_epoch="$(date +%s)"
-      play_click_not_before_epoch=$((credentials_submitted_epoch + 3))
-      log_automation "credentials-submitted attempt=$credential_attempt_count"
+      credentials_submitted_ms="$(date +%s%3N)"
+      # Reduce post-login wait before first Play click from 3.0s to 1.5s.
+      play_click_not_before_ms=$((credentials_submitted_ms + 1500))
       continue
     fi
 
     if [ "$credential_attempt_count" -eq 0 ]; then
       continue
     fi
-    if [ "$now_epoch" -lt "$play_click_not_before_epoch" ]; then
+    if [ "$now_epoch_ms" -lt "$play_click_not_before_ms" ]; then
       continue
     fi
 
-    if [ $((now_epoch - last_play_attempt_epoch)) -lt 4 ]; then
+    if [ $((now_epoch_ms - last_play_attempt_ms)) -lt 4000 ]; then
       continue
     fi
 
@@ -235,7 +210,7 @@ is_blocking_prompt_visible() {
 
     click_play_button "$play_attempt_count" || true
     play_attempt_count=$((play_attempt_count + 1))
-    last_play_attempt_epoch="$now_epoch"
+    last_play_attempt_ms="$now_epoch_ms"
     log_automation "play-click attempt=$play_attempt_count"
     if [ "$play_attempt_count" -ge "$max_play_attempts" ]; then
       log_automation "script-finished max-play-attempts reached"
