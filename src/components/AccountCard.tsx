@@ -1,6 +1,6 @@
 import React from 'react';
 import { Account } from '../types';
-import { Play, Settings, Square } from 'lucide-react';
+import { Loader2, Play, Settings, Square } from 'lucide-react';
 
 interface AccountCardProps {
     account: Account;
@@ -45,7 +45,9 @@ const AccountCard: React.FC<AccountCardProps> = ({ account, onLaunch, onStop, is
         ? status
         : (isActiveProcess ? 'running' : status);
     const showStopControl = isActiveProcess || status === 'stopping';
+    const launchInProgress = status === 'launching';
     const stopInProgress = status === 'stopping';
+    const actionDisabled = launchInProgress || stopInProgress;
 
     return (
         <div className={`bg-[color-mix(in_srgb,var(--theme-surface)_44%,transparent)] backdrop-blur-md rounded-lg p-3 flex items-center justify-between hover:bg-[color-mix(in_srgb,var(--theme-surface-soft)_50%,transparent)] transition-colors border ${isActiveProcess ? 'border-[var(--theme-active-border)] shadow-[0_0_0_1px_var(--theme-active-ring)]' : 'border-[var(--theme-border)]'}`}>
@@ -70,10 +72,12 @@ const AccountCard: React.FC<AccountCardProps> = ({ account, onLaunch, onStop, is
                 <button
                     onClick={() => (showStopControl ? onStop(account.id) : onLaunch(account.id))}
                     className="p-1.5 bg-[var(--theme-accent)] hover:bg-[var(--theme-accent-strong)] text-white rounded-md transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    title={stopInProgress ? 'Stopping Game' : (showStopControl ? 'Stop Game' : 'Launch Game')}
-                    disabled={stopInProgress}
+                    title={launchInProgress ? 'Launching Game' : (stopInProgress ? 'Stopping Game' : (showStopControl ? 'Stop Game' : 'Launch Game'))}
+                    disabled={actionDisabled}
                 >
-                    {showStopControl ? <Square size={16} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+                    {launchInProgress
+                        ? <Loader2 size={16} className="animate-spin" />
+                        : (showStopControl ? <Square size={16} fill="currentColor" /> : <Play size={18} fill="currentColor" />)}
                 </button>
                 <button
                     onClick={() => onEdit(account)}
