@@ -94,6 +94,62 @@ is_blocking_prompt_visible() {
     sleep 0.05
   }
 
+  focus_login_field() {
+    local field_name="$1"
+    local target_x target_y
+    eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
+    if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
+      return 1
+    fi
+
+    target_x=$((WIDTH / 2))
+    # Launcher login fields are typically in the mid-lower section.
+    if [ "$field_name" = "email" ]; then
+      target_y=$((HEIGHT * 58 / 100))
+    else
+      target_y=$((HEIGHT * 65 / 100))
+    fi
+
+    # Keep clicks away from the very edges for tiny or oddly scaled windows.
+    if [ "$target_y" -lt 90 ]; then
+      target_y=90
+    fi
+    if [ "$target_y" -gt $((HEIGHT - 90)) ]; then
+      target_y=$((HEIGHT - 90))
+    fi
+
+    xdotool mousemove --window "$win_id" "$target_x" "$target_y" click 1
+    sleep 0.12
+    log_automation "focus-$field_name via mouse x=$target_x y=$target_y win_w=$WIDTH win_h=$HEIGHT"
+    return 0
+  }
+
+  submit_credentials() {
+    # Settle focus and dismiss incidental overlays/tooltips first.
+    xdotool key --clearmodifiers --window "$win_id" Escape 2>/dev/null || true
+    sleep 0.08
+
+    if ! focus_login_field "email"; then
+      # Fallback path when geometry probing/click targeting fails.
+      xdotool key --clearmodifiers --window "$win_id" Shift+Tab
+      sleep 0.08
+      log_automation "focus-email fallback=Shift+Tab"
+    fi
+    clear_focused_input
+    xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_EMAIL"
+    sleep 0.12
+
+    # Prefer form-native traversal from email -> password.
+    xdotool key --clearmodifiers --window "$win_id" Tab
+    sleep 0.10
+    log_automation "focus-password via Tab"
+    clear_focused_input
+    xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_PASSWORD"
+    sleep 0.16
+    xdotool key --clearmodifiers --window "$win_id" Return
+    return 0
+  }
+
   click_play_button() {
     local attempt="$1"
     local cx cy
@@ -149,21 +205,7 @@ is_blocking_prompt_visible() {
         continue
       fi
 
-      # Keyboard-only credential flow tuned for launcher defaulting to password focus.
-      xdotool key --clearmodifiers --window "$win_id" Shift+Tab
-      sleep 0.08
-      clear_focused_input
-      log_automation "focus-email via single Shift+Tab and type"
-      xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_EMAIL"
-      sleep 0.12
-
-      xdotool key --clearmodifiers --window "$win_id" Tab
-      sleep 0.10
-      clear_focused_input
-      log_automation "focus-password via Tab and type"
-      xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_PASSWORD"
-      sleep 0.16
-      xdotool key --clearmodifiers --window "$win_id" Return
+      submit_credentials || true
       sleep 3
 
       credential_attempt_count=$((credential_attempt_count + 1))

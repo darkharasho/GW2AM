@@ -1346,16 +1346,53 @@ ipcMain.handle('check-portal-permissions', async () => {
     return { configured: false, message: 'Only available on Linux' };
   }
 
+  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
+  const appIds = Array.from(new Set([appName, 'gw2am'].filter(Boolean)));
+  const flatpakAvailable = spawnSync('which', ['flatpak'], { encoding: 'utf8' }).status === 0;
+
+  if (flatpakAvailable) {
+    try {
+      const permissions = spawnSync('flatpak', ['permissions', 'remote-desktop'], { encoding: 'utf8' });
+      if (permissions.status === 0) {
+        const lines = String(permissions.stdout || '').split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const parts = trimmed.split(/\s+/);
+          if (parts.length < 4) continue;
+          const table = parts[0];
+          const id = parts[1];
+          const appId = parts[2];
+          const permission = parts[3]?.toLowerCase();
+          if (
+            table === 'remote-desktop'
+            && id === 'remote-desktop'
+            && appIds.includes(appId)
+            && permission?.startsWith('yes')
+          ) {
+            return { configured: true, message: 'Portal permissions already configured' };
+          }
+        }
+      }
+    } catch {
+      // Fall back to legacy file check below.
+    }
+  }
+
   const homeDir = process.env.HOME || os.homedir();
   const permissionsFile = path.join(homeDir, '.local/share/xdg-desktop-portal/permissions/remote-desktop');
 
   try {
     if (fs.existsSync(permissionsFile)) {
       const content = fs.readFileSync(permissionsFile, 'utf8');
-      const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
-      const hasPermission = content.includes(`[${appName}]`) || content.includes('[gw2am]');
+      const hasPermission = appIds.some((id) => content.includes(`[${id}]`));
       if (hasPermission) {
-        return { configured: true, message: 'Portal permissions already configured' };
+        return {
+          configured: true,
+          message: flatpakAvailable
+            ? 'Legacy portal config found (may require reconfigure)'
+            : 'Portal permissions appear configured (legacy file)',
+        };
       }
     }
     return { configured: false, message: 'Portal permissions not configured' };
@@ -1369,10 +1406,42 @@ ipcMain.handle('configure-portal-permissions', async () => {
     return { success: false, message: 'Only available on Linux' };
   }
 
+  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
+  const appIds = Array.from(new Set([appName, 'gw2am'].filter(Boolean)));
+  const flatpakAvailable = spawnSync('which', ['flatpak'], { encoding: 'utf8' }).status === 0;
+
+  if (flatpakAvailable) {
+    try {
+      let appliedCount = 0;
+      for (const appId of appIds) {
+        const setResult = spawnSync(
+          'flatpak',
+          ['permission-set', 'remote-desktop', 'remote-desktop', appId, 'yes'],
+          { encoding: 'utf8' },
+        );
+        if (setResult.status === 0) {
+          appliedCount += 1;
+        } else {
+          const stderr = String(setResult.stderr || '').trim();
+          logMainWarn('portal', `flatpak permission-set failed for appId=${appId}: ${stderr || 'unknown error'}`);
+        }
+      }
+
+      if (appliedCount > 0) {
+        logMain('portal', `Configured remote-desktop portal permissions via flatpak for ${appliedCount} app id(s)`);
+        return { success: true, message: 'Portal permissions configured successfully.' };
+      }
+      return { success: false, message: 'Failed to configure portal permissions via flatpak.' };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logMainError('portal', `Flatpak permission configuration failed: ${message}`);
+      return { success: false, message: `Failed to configure via flatpak: ${message}` };
+    }
+  }
+
   const homeDir = process.env.HOME || os.homedir();
   const permissionsDir = path.join(homeDir, '.local/share/xdg-desktop-portal/permissions');
   const permissionsFile = path.join(permissionsDir, 'remote-desktop');
-  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
 
   try {
     // Create directory if it doesn't exist
@@ -1387,7 +1456,7 @@ ipcMain.handle('configure-portal-permissions', async () => {
     }
 
     // Check if already configured
-    if (existingContent.includes(`[${appName}]`) || existingContent.includes('[gw2am]')) {
+    if (appIds.some((id) => existingContent.includes(`[${id}]`))) {
       return { success: true, message: 'Already configured' };
     }
 
@@ -1410,4 +1479,3 @@ ipcMain.handle('configure-portal-permissions', async () => {
     return { success: false, message: `Failed to configure: ${message}` };
   }
 });
-
