@@ -1,17 +1,18 @@
 # Release Notes
 
-Version v0.2.2 — February 9, 2026
+Version v0.3.0 — February 10, 2026
 
 ## 🌟 Highlights
-- Master key cache is now encrypted using OS-backed secure storage when available (plaintext fallback if not supported).
-- A runtime flags API for showcase mode is added, with corresponding UI updates.
+- OS-specific credential automation flows for Windows and Linux.
+- Auto-login now uses a wait period after the launcher appears to boost reliability.
 
 ## 🛠️ Improvements
-- New UI themes added: Elonian Sun, Domain Of Ice, Crystal Bloom, and Verdant Canopy.
-- Layout improvements include updated body element dimensions and transform for better responsiveness.
+- Launch automation is now split per OS, with OS-specific handling.
+- Reduced retry attempts for login when the game is fullscreen to avoid extra spins.
 
 ## 🧯 Fixes
-- Toast notifications have been added to surface API call timeouts and provide clearer feedback.
+- Linux: improved launch reliability and popup suppression during auto-login.
+- Windows: credential automation now performs a single-pass login after focusing the password field.
 
 ## ⚠️ Breaking Changes
-- None.
+- Linux automation now requires xdotool; install it to enable auto-login.
