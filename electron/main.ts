@@ -1,7 +1,6 @@
 ﻿import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import log from 'electron-log';
@@ -786,6 +785,181 @@ function startCredentialAutomation(
   console.error(`Credential automation is not implemented for platform: ${process.platform}`);
 }
 
+function isLinuxRemoteDesktopPermissionConfigured(): boolean {
+  if (process.platform !== 'linux') return false;
+
+  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
+  const appDisplayName = (app.getName() || '').toLowerCase();
+  const appDisplayNameCompact = appDisplayName.replace(/[^a-z0-9.]+/g, '');
+  const appDisplayNameDashed = appDisplayName.replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
+  const flatpakId = String(process.env.FLATPAK_ID || '').toLowerCase().trim();
+  const appIds = Array.from(new Set([
+    flatpakId,
+    appName,
+    appDisplayName,
+    appDisplayNameCompact,
+    appDisplayNameDashed,
+    'gw2am',
+    'com.gw2am',
+    'com.gw2am.app',
+  ].filter(Boolean)));
+  const flatpakAvailable = spawnSync('which', ['flatpak'], { encoding: 'utf8' }).status === 0;
+  if (!flatpakAvailable) return false;
+
+  try {
+    const permissions = spawnSync('flatpak', ['permissions', 'remote-desktop'], { encoding: 'utf8' });
+    if (permissions.status !== 0) return false;
+    const lines = String(permissions.stdout || '').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('Table') || trimmed.startsWith('table')) continue;
+      const parts = trimmed.split(/\s+/);
+      if (parts.length < 4) continue;
+      const table = parts[0];
+      const id = parts[1];
+      const appId = parts[2]?.toLowerCase();
+      const permission = parts[3]?.toLowerCase();
+      if (
+        table === 'remote-desktop'
+        && id === 'remote-desktop'
+        && appIds.includes(appId)
+        && permission?.startsWith('yes')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function configureLinuxRemoteDesktopPermissionBestEffort(): { success: boolean; message: string } {
+  if (process.platform !== 'linux') {
+    return { success: false, message: 'Only available on Linux' };
+  }
+
+  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
+  const appDisplayName = (app.getName() || '').toLowerCase();
+  const appDisplayNameCompact = appDisplayName.replace(/[^a-z0-9.]+/g, '');
+  const appDisplayNameDashed = appDisplayName.replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
+  const flatpakId = String(process.env.FLATPAK_ID || '').toLowerCase().trim();
+  const appIds = Array.from(new Set([
+    flatpakId,
+    appName,
+    appDisplayName,
+    appDisplayNameCompact,
+    appDisplayNameDashed,
+    'gw2am',
+    'com.gw2am',
+    'com.gw2am.app',
+  ].filter(Boolean)));
+  const flatpakAvailable = spawnSync('which', ['flatpak'], { encoding: 'utf8' }).status === 0;
+
+  if (!flatpakAvailable) {
+    return {
+      success: false,
+      message: 'flatpak is not available, so GW2AM cannot auto-configure xdg-desktop-portal permissions on this system.',
+    };
+  }
+
+  try {
+    let appliedCount = 0;
+    for (const appId of appIds) {
+      const setResult = spawnSync(
+        'flatpak',
+        ['permission-set', 'remote-desktop', 'remote-desktop', appId, 'yes'],
+        { encoding: 'utf8' },
+      );
+      if (setResult.status === 0) {
+        appliedCount += 1;
+      } else {
+        const stderr = String(setResult.stderr || '').trim();
+        logMainWarn('portal', `flatpak permission-set failed for appId=${appId}: ${stderr || 'unknown error'}`);
+      }
+    }
+
+    const configured = isLinuxRemoteDesktopPermissionConfigured();
+    if (configured) {
+      const portalServices = [
+        'xdg-desktop-portal.service',
+        'xdg-desktop-portal-kde.service',
+        'xdg-desktop-portal-gnome.service',
+      ];
+      for (const svc of portalServices) {
+        try {
+          spawnSync('systemctl', ['--user', 'restart', svc], { encoding: 'utf8' });
+        } catch {
+          // Optional best-effort restart.
+        }
+      }
+      return { success: true, message: `Configured via flatpak for ${appliedCount} app id(s)` };
+    }
+    return {
+      success: false,
+      message: `Applied ${appliedCount} candidate app id(s), but verification did not find an active allow rule.`,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `Flatpak permission configuration failed: ${message}` };
+  }
+}
+
+function prewarmLinuxInputAuthorizationOnFirstOpen(): void {
+  if (process.platform !== 'linux') return;
+
+  setTimeout(() => {
+    const xdotoolCheck = spawnSync('which', ['xdotool'], { encoding: 'utf8' });
+    if (xdotoolCheck.status !== 0) {
+      logMainWarn('portal', 'Skipping Linux input prewarm: xdotool is not installed.');
+      return;
+    }
+
+    if (!isLinuxRemoteDesktopPermissionConfigured()) {
+      const configureResult = configureLinuxRemoteDesktopPermissionBestEffort();
+      if (configureResult.success) {
+        logMain('portal', `Auto-configured remote-desktop permissions on startup: ${configureResult.message}`);
+      }
+      if (!configureResult.success) {
+        logMainWarn('portal', `Startup auto-configure failed: ${configureResult.message}`);
+      }
+    }
+
+    const prewarmScript = `
+      win_id="$(xdotool search --onlyvisible --pid "${process.pid}" 2>/dev/null | head -n 1)"
+      if [ -z "$win_id" ]; then
+        win_id="$(xdotool getactivewindow 2>/dev/null || true)"
+      fi
+
+      if [ -z "$win_id" ]; then
+        exit 1
+      fi
+
+      xdotool windowactivate --sync "$win_id" 2>/dev/null || true
+      xdotool key --clearmodifiers --window "$win_id" a
+    `;
+    const child = spawn('/bin/bash', ['-c', prewarmScript], {
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderrOutput = '';
+    child.stderr?.on('data', (chunk) => {
+      stderrOutput += String(chunk);
+    });
+    child.on('error', (error) => {
+      logMainWarn('portal', `Linux input prewarm failed: ${error.message}`);
+    });
+    child.on('exit', (code) => {
+      if (code === 0) {
+        logMain('portal', 'Triggered Linux input authorization prewarm.');
+        return;
+      }
+      const details = stderrOutput.trim();
+      logMainWarn('portal', `Linux input prewarm exited with code=${code ?? 'null'}${details ? ` stderr=${details}` : ''}`);
+    });
+  }, 350);
+}
+
 const createWindow = () => {
   const appIconPath = app.isPackaged
     ? path.join(__dirname, '../dist/img/GW2AM-square.png')
@@ -834,6 +1008,7 @@ app.on('ready', () => {
     app.setAppUserModelId('com.gw2am.app');
   }
   createWindow();
+  prewarmLinuxInputAuthorizationOnFirstOpen();
 
   const updateConfigPath = path.join(process.resourcesPath, 'app-update.yml');
   const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE);
@@ -1313,7 +1488,14 @@ ipcMain.handle('launch-account', async (_, id) => {
 });
 
 ipcMain.handle('save-settings', async (_, settings) => {
-  store.set('settings', settings);
+  const existingSettings = (store.get('settings') as {
+    gw2Path?: string;
+    masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never';
+    themeId?: string;
+    bypassLinuxPortalPrompt?: boolean;
+    linuxInputAuthorizationPrewarmAttempted?: boolean;
+  } | undefined) || {};
+  store.set('settings', { ...existingSettings, ...settings });
   if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
     if (masterKey) {
       store.set('security_v2.cachedMasterKey', encryptForStorage(masterKey));
@@ -1345,57 +1527,18 @@ ipcMain.handle('check-portal-permissions', async () => {
   if (process.platform !== 'linux') {
     return { configured: false, message: 'Only available on Linux' };
   }
-
-  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
-  const appIds = Array.from(new Set([appName, 'gw2am'].filter(Boolean)));
   const flatpakAvailable = spawnSync('which', ['flatpak'], { encoding: 'utf8' }).status === 0;
-
-  if (flatpakAvailable) {
-    try {
-      const permissions = spawnSync('flatpak', ['permissions', 'remote-desktop'], { encoding: 'utf8' });
-      if (permissions.status === 0) {
-        const lines = String(permissions.stdout || '').split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          const parts = trimmed.split(/\s+/);
-          if (parts.length < 4) continue;
-          const table = parts[0];
-          const id = parts[1];
-          const appId = parts[2];
-          const permission = parts[3]?.toLowerCase();
-          if (
-            table === 'remote-desktop'
-            && id === 'remote-desktop'
-            && appIds.includes(appId)
-            && permission?.startsWith('yes')
-          ) {
-            return { configured: true, message: 'Portal permissions already configured' };
-          }
-        }
-      }
-    } catch {
-      // Fall back to legacy file check below.
-    }
+  if (!flatpakAvailable) {
+    return {
+      configured: false,
+      message: 'flatpak not found; cannot verify or auto-configure portal permissions on this system.',
+    };
   }
 
-  const homeDir = process.env.HOME || os.homedir();
-  const permissionsFile = path.join(homeDir, '.local/share/xdg-desktop-portal/permissions/remote-desktop');
-
   try {
-    if (fs.existsSync(permissionsFile)) {
-      const content = fs.readFileSync(permissionsFile, 'utf8');
-      const hasPermission = appIds.some((id) => content.includes(`[${id}]`));
-      if (hasPermission) {
-        return {
-          configured: true,
-          message: flatpakAvailable
-            ? 'Legacy portal config found (may require reconfigure)'
-            : 'Portal permissions appear configured (legacy file)',
-        };
-      }
-    }
-    return { configured: false, message: 'Portal permissions not configured' };
+    return isLinuxRemoteDesktopPermissionConfigured()
+      ? { configured: true, message: 'Portal permissions already configured' }
+      : { configured: false, message: 'Portal permissions not configured' };
   } catch (error) {
     return { configured: false, message: `Error checking permissions: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -1405,77 +1548,11 @@ ipcMain.handle('configure-portal-permissions', async () => {
   if (process.platform !== 'linux') {
     return { success: false, message: 'Only available on Linux' };
   }
-
-  const appName = path.basename(process.execPath).replace('.AppImage', '').toLowerCase();
-  const appIds = Array.from(new Set([appName, 'gw2am'].filter(Boolean)));
-  const flatpakAvailable = spawnSync('which', ['flatpak'], { encoding: 'utf8' }).status === 0;
-
-  if (flatpakAvailable) {
-    try {
-      let appliedCount = 0;
-      for (const appId of appIds) {
-        const setResult = spawnSync(
-          'flatpak',
-          ['permission-set', 'remote-desktop', 'remote-desktop', appId, 'yes'],
-          { encoding: 'utf8' },
-        );
-        if (setResult.status === 0) {
-          appliedCount += 1;
-        } else {
-          const stderr = String(setResult.stderr || '').trim();
-          logMainWarn('portal', `flatpak permission-set failed for appId=${appId}: ${stderr || 'unknown error'}`);
-        }
-      }
-
-      if (appliedCount > 0) {
-        logMain('portal', `Configured remote-desktop portal permissions via flatpak for ${appliedCount} app id(s)`);
-        return { success: true, message: 'Portal permissions configured successfully.' };
-      }
-      return { success: false, message: 'Failed to configure portal permissions via flatpak.' };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logMainError('portal', `Flatpak permission configuration failed: ${message}`);
-      return { success: false, message: `Failed to configure via flatpak: ${message}` };
-    }
+  const result = configureLinuxRemoteDesktopPermissionBestEffort();
+  if (result.success) {
+    logMain('portal', result.message);
+    return { success: true, message: result.message };
   }
-
-  const homeDir = process.env.HOME || os.homedir();
-  const permissionsDir = path.join(homeDir, '.local/share/xdg-desktop-portal/permissions');
-  const permissionsFile = path.join(permissionsDir, 'remote-desktop');
-
-  try {
-    // Create directory if it doesn't exist
-    if (!fs.existsSync(permissionsDir)) {
-      fs.mkdirSync(permissionsDir, { recursive: true });
-    }
-
-    // Read existing content if file exists
-    let existingContent = '';
-    if (fs.existsSync(permissionsFile)) {
-      existingContent = fs.readFileSync(permissionsFile, 'utf8');
-    }
-
-    // Check if already configured
-    if (appIds.some((id) => existingContent.includes(`[${id}]`))) {
-      return { success: true, message: 'Already configured' };
-    }
-
-    // Add our app's permissions
-    const newEntry = `\n[gw2am]\nallow=true\n`;
-    fs.writeFileSync(permissionsFile, existingContent + newEntry, 'utf8');
-
-    // Restart xdg-desktop-portal service
-    try {
-      spawnSync('systemctl', ['--user', 'restart', 'xdg-desktop-portal.service'], { encoding: 'utf8' });
-    } catch {
-      // Service restart might fail in some environments, but the config will still work
-    }
-
-    logMain('portal', 'Successfully configured xdg-desktop-portal permissions');
-    return { success: true, message: 'Portal permissions configured successfully. Restart may be required.' };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logMainError('portal', `Failed to configure portal permissions: ${message}`);
-    return { success: false, message: `Failed to configure: ${message}` };
-  }
+  logMainWarn('portal', result.message);
+  return { success: false, message: result.message };
 });

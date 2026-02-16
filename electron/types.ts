@@ -24,6 +24,7 @@ export interface AppSettings {
     masterPasswordPrompt: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never';
     themeId: string;
     bypassLinuxPortalPrompt?: boolean;
+    linuxInputAuthorizationPrewarmAttempted?: boolean;
 }
 
 export type IpcEvents = {
