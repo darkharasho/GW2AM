@@ -1,16 +1,17 @@
 # Release Notes
 
-Version v0.3.1 — February 10, 2026
+Version v0.3.2 — February 15, 2026
 
 ## 🌟 Highlights
-- Added a visual loading state on the Account Card to indicate when a game launch is in progress.
+- On Linux, GW2AM can auto-configure remote-desktop portal permissions via Flatpak when available.
+- On the first Linux launch, the app prewarms input authorization to speed up access.
 
 ## 🛠️ Improvements
-- The Launch button now shows a loading spinner during launching, replacing the usual icon.
-- Actions are disabled while an operation is in progress and titles reflect the current state (Launching/Stopping).
+- Settings are merged with existing preferences when saved, avoiding overwriting other options.
+- Linux portal permission checks report status more clearly.
 
 ## 🧯 Fixes
-- None.
+None.
 
 ## ⚠️ Breaking Changes
-- None.
+None.
