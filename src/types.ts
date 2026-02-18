@@ -17,4 +17,17 @@ export interface AppSettings {
     themeId: string;
     bypassLinuxPortalPrompt?: boolean;
     linuxInputAuthorizationPrewarmAttempted?: boolean;
+    gw2AutoUpdateBeforeLaunch?: boolean;
+    gw2AutoUpdateBackground?: boolean;
+    gw2AutoUpdateVisible?: boolean;
+}
+
+export interface Gw2UpdateStatus {
+    phase: 'idle' | 'queued' | 'starting' | 'running' | 'completed' | 'failed';
+    mode: 'before_launch' | 'background' | 'manual';
+    platform: string;
+    accountId?: string;
+    startedAt?: number;
+    completedAt?: number;
+    message?: string;
 }

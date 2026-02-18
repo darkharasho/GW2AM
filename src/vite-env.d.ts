@@ -57,6 +57,25 @@ interface Api {
     configurePortalPermissions: () => Promise<{ success: boolean; message: string }>;
     checkPortalPermissions: () => Promise<{ configured: boolean; message: string }>;
     prewarmLinuxInputAuthorization: () => Promise<{ success: boolean; message: string }>;
+    getGw2UpdateStatus: () => Promise<{
+        phase: 'idle' | 'queued' | 'starting' | 'running' | 'completed' | 'failed';
+        mode: 'before_launch' | 'background' | 'manual';
+        platform: string;
+        accountId?: string;
+        startedAt?: number;
+        completedAt?: number;
+        message?: string;
+    }>;
+    startGw2Update: (visible?: boolean) => Promise<boolean>;
+    onGw2UpdateStatus: (callback: (value: {
+        phase: 'idle' | 'queued' | 'starting' | 'running' | 'completed' | 'failed';
+        mode: 'before_launch' | 'background' | 'manual';
+        platform: string;
+        accountId?: string;
+        startedAt?: number;
+        completedAt?: number;
+        message?: string;
+    }) => void) => () => void;
 }
 
 declare global {

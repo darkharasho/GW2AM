@@ -25,6 +25,19 @@ export interface AppSettings {
     themeId: string;
     bypassLinuxPortalPrompt?: boolean;
     linuxInputAuthorizationPrewarmAttempted?: boolean;
+    gw2AutoUpdateBeforeLaunch?: boolean;
+    gw2AutoUpdateBackground?: boolean;
+    gw2AutoUpdateVisible?: boolean;
+}
+
+export interface Gw2UpdateStatus {
+    phase: 'idle' | 'queued' | 'starting' | 'running' | 'completed' | 'failed';
+    mode: 'before_launch' | 'background' | 'manual';
+    platform: NodeJS.Platform;
+    accountId?: string;
+    startedAt?: number;
+    completedAt?: number;
+    message?: string;
 }
 
 export type IpcEvents = {
@@ -58,4 +71,6 @@ export type IpcEvents = {
     'configure-portal-permissions': () => Promise<{ success: boolean; message: string }>;
     'check-portal-permissions': () => Promise<{ configured: boolean; message: string }>;
     'prewarm-linux-input-authorization': () => Promise<{ success: boolean; message: string }>;
+    'get-gw2-update-status': () => Promise<Gw2UpdateStatus>;
+    'start-gw2-update': (visible?: boolean) => Promise<boolean>;
 }

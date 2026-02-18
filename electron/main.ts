@@ -36,8 +36,26 @@ const SAFE_STORAGE_PREFIX = 'safe:';
 const STEAM_GW2_APP_ID = '1284210';
 const WINDOWS_PROCESS_SNAPSHOT_TTL_MS = 1500;
 const LINUX_PREWARM_REFOCUS_IDLE_MS = 60 * 60 * 1000;
+const GW2_UPDATE_RECENT_REUSE_MS = 10 * 60 * 1000;
 let windowsProcessSnapshotCache: { timestamp: number; processes: any[] } = { timestamp: 0, processes: [] };
 let linuxLastBlurAt = 0;
+type Gw2UpdateMode = 'before_launch' | 'background' | 'manual';
+type Gw2UpdatePhase = 'idle' | 'queued' | 'starting' | 'running' | 'completed' | 'failed';
+type Gw2UpdateStatus = {
+  phase: Gw2UpdatePhase;
+  mode: Gw2UpdateMode;
+  platform: NodeJS.Platform;
+  accountId?: string;
+  startedAt?: number;
+  completedAt?: number;
+  message?: string;
+};
+let gw2UpdateStatus: Gw2UpdateStatus = {
+  phase: 'idle',
+  mode: 'manual',
+  platform: process.platform,
+};
+let gw2UpdateInFlight: Promise<boolean> | null = null;
 
 function encryptForStorage(key: Buffer): string {
   if (safeStorage.isEncryptionAvailable()) {
@@ -65,6 +83,7 @@ let persistWindowStateTimer: NodeJS.Timeout | null = null;
 let autoUpdateEnabled = false;
 const isDevFakeUpdate = process.env.GW2AM_DEV_FAKE_UPDATE === '1';
 const isDevFakeWhatsNew = process.env.GW2AM_DEV_FAKE_WHATS_NEW === '1' || isDevFakeUpdate;
+const isDevFakeGw2Update = process.env.GW2AM_DEV_FAKE_GW2_UPDATE === '1';
 const isDevShowcase = process.env.GW2AM_DEV_SHOWCASE === '1';
 let fakeUpdateTimer: NodeJS.Timeout | null = null;
 const showcaseActiveAccounts = new Set<string>(['showcase-a']);
@@ -250,6 +269,234 @@ function requestAppShutdown(source: string): void {
 function sendUpdaterEvent(channel: string, payload?: unknown): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(channel, payload);
+}
+
+function getLastSuccessfulGw2UpdateAt(): number {
+  const raw = store.get('gw2Update.lastSuccessfulAt');
+  const parsed = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
+function setLastSuccessfulGw2UpdateAt(timestamp: number): void {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return;
+  store.set('gw2Update.lastSuccessfulAt', timestamp);
+}
+
+function hasRecentSuccessfulGw2Update(): boolean {
+  const lastSuccessfulAt = getLastSuccessfulGw2UpdateAt();
+  if (!lastSuccessfulAt) return false;
+  return (Date.now() - lastSuccessfulAt) < GW2_UPDATE_RECENT_REUSE_MS;
+}
+
+function getAppSettings(): {
+  gw2Path?: string;
+  bypassLinuxPortalPrompt?: boolean;
+  gw2AutoUpdateBeforeLaunch?: boolean;
+  gw2AutoUpdateBackground?: boolean;
+  gw2AutoUpdateVisible?: boolean;
+} {
+  return (store.get('settings') as {
+    gw2Path?: string;
+    bypassLinuxPortalPrompt?: boolean;
+    gw2AutoUpdateBeforeLaunch?: boolean;
+    gw2AutoUpdateBackground?: boolean;
+    gw2AutoUpdateVisible?: boolean;
+  } | undefined) || {};
+}
+
+function sendGw2UpdateStatus(update: Partial<Gw2UpdateStatus>): void {
+  gw2UpdateStatus = {
+    ...gw2UpdateStatus,
+    ...update,
+    platform: process.platform,
+  };
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('gw2-update-status', gw2UpdateStatus);
+}
+
+function buildGw2UpdateArgs(visible: boolean): string[] {
+  const args = ['-image'];
+  if (!visible) args.push('-nopatchui');
+  return args;
+}
+
+async function runGw2GameUpdate(mode: Gw2UpdateMode, accountId?: string, forceVisible?: boolean): Promise<boolean> {
+  if (gw2UpdateInFlight) return gw2UpdateInFlight;
+  if (mode !== 'manual' && hasRecentSuccessfulGw2Update()) {
+    sendGw2UpdateStatus({
+      phase: 'completed',
+      mode,
+      accountId,
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+      message: `Skipping GW2 update (completed recently within ${Math.floor(GW2_UPDATE_RECENT_REUSE_MS / 60000)} minutes).`,
+    });
+    return true;
+  }
+  if (isDevFakeGw2Update) {
+    const startedAt = Date.now();
+    sendGw2UpdateStatus({
+      phase: 'starting',
+      mode,
+      accountId,
+      startedAt,
+      completedAt: undefined,
+      message: 'Starting simulated GW2 update.',
+    });
+    gw2UpdateInFlight = new Promise<boolean>((resolve) => {
+      setTimeout(() => {
+        sendGw2UpdateStatus({
+          phase: 'running',
+          mode,
+          accountId,
+          startedAt,
+          message: 'Simulated GW2 update running...',
+        });
+      }, 350);
+      setTimeout(() => {
+        setLastSuccessfulGw2UpdateAt(Date.now());
+        sendGw2UpdateStatus({
+          phase: 'completed',
+          mode,
+          accountId,
+          completedAt: Date.now(),
+          message: 'Simulated GW2 update completed.',
+        });
+        resolve(true);
+      }, 1250);
+    }).finally(() => {
+      gw2UpdateInFlight = null;
+    });
+    return gw2UpdateInFlight;
+  }
+
+  const settings = getAppSettings();
+  const gw2Path = settings.gw2Path?.trim() || '';
+  if (!gw2Path) {
+    sendGw2UpdateStatus({
+      phase: 'failed',
+      mode,
+      accountId,
+      completedAt: Date.now(),
+      message: 'GW2 path is not configured; cannot run game update.',
+    });
+    return false;
+  }
+  if (!fs.existsSync(gw2Path)) {
+    sendGw2UpdateStatus({
+      phase: 'failed',
+      mode,
+      accountId,
+      completedAt: Date.now(),
+      message: `GW2 path does not exist: ${gw2Path}`,
+    });
+    return false;
+  }
+
+  const visible = typeof forceVisible === 'boolean'
+    ? forceVisible
+    : Boolean(settings.gw2AutoUpdateVisible);
+  const args = buildGw2UpdateArgs(visible);
+  const cwd = path.dirname(gw2Path);
+  const startedAt = Date.now();
+
+  sendGw2UpdateStatus({
+    phase: 'starting',
+    mode,
+    accountId,
+    startedAt,
+    completedAt: undefined,
+    message: `Starting GW2 update (${args.join(' ')})`,
+  });
+
+  gw2UpdateInFlight = new Promise<boolean>((resolve) => {
+    try {
+      const child = spawn(gw2Path, args, {
+        cwd,
+        detached: false,
+        stdio: 'ignore',
+        windowsHide: !visible,
+      });
+      child.on('error', (error) => {
+        sendGw2UpdateStatus({
+          phase: 'failed',
+          mode,
+          accountId,
+          completedAt: Date.now(),
+          message: `Update process failed to start: ${error.message}`,
+        });
+        resolve(false);
+      });
+      child.on('spawn', () => {
+        sendGw2UpdateStatus({
+          phase: 'running',
+          mode,
+          accountId,
+          startedAt,
+          message: `GW2 update running (pid=${child.pid ?? 'unknown'})`,
+        });
+      });
+      child.on('exit', (code) => {
+        if (code === 0) {
+          setLastSuccessfulGw2UpdateAt(Date.now());
+          sendGw2UpdateStatus({
+            phase: 'completed',
+            mode,
+            accountId,
+            completedAt: Date.now(),
+            message: 'GW2 update completed.',
+          });
+          resolve(true);
+        } else {
+          sendGw2UpdateStatus({
+            phase: 'failed',
+            mode,
+            accountId,
+            completedAt: Date.now(),
+            message: `GW2 update exited with code=${code ?? 'null'}.`,
+          });
+          resolve(false);
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendGw2UpdateStatus({
+        phase: 'failed',
+        mode,
+        accountId,
+        completedAt: Date.now(),
+        message: `GW2 update spawn exception: ${message}`,
+      });
+      resolve(false);
+    }
+  }).finally(() => {
+    gw2UpdateInFlight = null;
+  });
+
+  return gw2UpdateInFlight;
+}
+
+function maybeStartBackgroundGw2Update(reason: 'startup' | 'settings-save'): void {
+  if (gw2UpdateInFlight) return;
+  const settings = getAppSettings();
+  const shouldRun = reason === 'startup' ? true : Boolean(settings.gw2AutoUpdateBackground);
+  if (!shouldRun) return;
+  if (!isDevFakeGw2Update) {
+    if (!settings.gw2Path || !settings.gw2Path.trim()) return;
+    if (!fs.existsSync(settings.gw2Path.trim())) return;
+  }
+  if (getAllRunningGw2Pids().length > 0) return;
+
+  sendGw2UpdateStatus({
+    phase: 'queued',
+    mode: 'background',
+    message: `GW2 ${reason === 'startup' ? 'startup' : 'background'} update queued.`,
+    completedAt: undefined,
+  });
+  setTimeout(() => {
+    void runGw2GameUpdate('background');
+  }, reason === 'startup' ? 1200 : 400);
 }
 
 function setupAutoUpdater(): void {
@@ -1112,6 +1359,7 @@ app.on('ready', () => {
   }
   createWindow();
   prewarmLinuxInputAuthorizationOnFirstOpen();
+  maybeStartBackgroundGw2Update('startup');
 
   const updateConfigPath = path.join(process.resourcesPath, 'app-update.yml');
   const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE);
@@ -1519,16 +1767,25 @@ ipcMain.handle('launch-account', async (_, id) => {
     return false;
   }
 
-  // @ts-ignore
-  const settings = store.get('settings') as { gw2Path: string; bypassLinuxPortalPrompt?: boolean };
+  const settings = getAppSettings();
   const gw2Path = settings?.gw2Path?.trim();
   const bypassLinuxPortalPrompt = Boolean(settings?.bypassLinuxPortalPrompt);
+  const autoUpdateBeforeLaunch = Boolean(settings?.gw2AutoUpdateBeforeLaunch);
 
   if (gw2Path && !fs.existsSync(gw2Path)) {
     console.error(`GW2 path does not exist: ${gw2Path}`);
     logMainError('launch', `GW2 path does not exist for account=${id}: ${gw2Path}`);
     launchStateMachine.setState(id, 'errored', 'verified', 'GW2 path missing');
     return false;
+  }
+
+  if (autoUpdateBeforeLaunch && gw2Path) {
+    launchStateMachine.setState(id, 'launch_requested', 'inferred', 'Running GW2 update before launch');
+    const updated = await runGw2GameUpdate('before_launch', id);
+    if (!updated) {
+      launchStateMachine.setState(id, 'errored', 'verified', 'GW2 update failed before launch');
+      return false;
+    }
   }
 
   const extraArgs = splitLaunchArguments(account.launchArguments);
@@ -1597,6 +1854,9 @@ ipcMain.handle('save-settings', async (_, settings) => {
     themeId?: string;
     bypassLinuxPortalPrompt?: boolean;
     linuxInputAuthorizationPrewarmAttempted?: boolean;
+    gw2AutoUpdateBeforeLaunch?: boolean;
+    gw2AutoUpdateBackground?: boolean;
+    gw2AutoUpdateVisible?: boolean;
   } | undefined) || {};
   store.set('settings', { ...existingSettings, ...settings });
   const mergedMode = (settings?.masterPasswordPrompt ?? existingSettings.masterPasswordPrompt ?? 'every_time');
@@ -1607,6 +1867,7 @@ ipcMain.handle('save-settings', async (_, settings) => {
   } else {
     store.set('security_v2.cachedMasterKey', '');
   }
+  maybeStartBackgroundGw2Update('settings-save');
 });
 
 ipcMain.handle('get-settings', async () => {
@@ -1616,6 +1877,9 @@ ipcMain.handle('get-settings', async () => {
       masterPasswordPrompt: 'never',
       themeId: 'blood_legion',
       bypassLinuxPortalPrompt: false,
+      gw2AutoUpdateBeforeLaunch: true,
+      gw2AutoUpdateBackground: false,
+      gw2AutoUpdateVisible: false,
     };
   }
   return store.get('settings');
@@ -1667,4 +1931,13 @@ ipcMain.handle('configure-portal-permissions', async () => {
 
 ipcMain.handle('prewarm-linux-input-authorization', async () => {
   return triggerLinuxInputAuthorizationPrewarm('manual');
+});
+
+ipcMain.handle('get-gw2-update-status', async () => {
+  return gw2UpdateStatus;
+});
+
+ipcMain.handle('start-gw2-update', async (_event, visible?: boolean) => {
+  const status = await runGw2GameUpdate('manual', undefined, Boolean(visible));
+  return status;
 });

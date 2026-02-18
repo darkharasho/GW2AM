@@ -15,6 +15,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [masterPasswordPrompt, setMasterPasswordPrompt] = useState<'every_time' | 'daily' | 'weekly' | 'monthly' | 'never'>('every_time');
     const [themeId, setThemeId] = useState('blood_legion');
     const [bypassLinuxPortalPrompt, setBypassLinuxPortalPrompt] = useState(false);
+    const [gw2AutoUpdateBeforeLaunch, setGw2AutoUpdateBeforeLaunch] = useState(false);
+    const [gw2AutoUpdateBackground, setGw2AutoUpdateBackground] = useState(false);
+    const [gw2AutoUpdateVisible, setGw2AutoUpdateVisible] = useState(false);
+    const [gw2UpdateStatusText, setGw2UpdateStatusText] = useState('Idle');
+    const [isRunningGw2Update, setIsRunningGw2Update] = useState(false);
     const [portalConfigStatus, setPortalConfigStatus] = useState<{ configured: boolean; message: string } | null>(null);
 
     useEffect(() => {
@@ -25,21 +30,66 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 setMasterPasswordPrompt(settings.masterPasswordPrompt ?? 'every_time');
                 setThemeId(settings.themeId || 'blood_legion');
                 setBypassLinuxPortalPrompt(settings.bypassLinuxPortalPrompt ?? false);
+                setGw2AutoUpdateBeforeLaunch(settings.gw2AutoUpdateBeforeLaunch ?? false);
+                setGw2AutoUpdateBackground(settings.gw2AutoUpdateBackground ?? false);
+                setGw2AutoUpdateVisible(settings.gw2AutoUpdateVisible ?? false);
             }
+        });
+        window.api.getGw2UpdateStatus().then((status) => {
+            const message = status.message ? ` - ${status.message}` : '';
+            setGw2UpdateStatusText(`${status.phase}${message}`);
+        }).catch(() => {
+            setGw2UpdateStatusText('Unknown');
+        });
+        const unsubscribeGw2Status = window.api.onGw2UpdateStatus((status) => {
+            const typed = status as {
+                phase?: string;
+                message?: string;
+            };
+            const phase = typed?.phase || 'unknown';
+            const message = typed?.message ? ` - ${typed.message}` : '';
+            setGw2UpdateStatusText(`${phase}${message}`);
+            setIsRunningGw2Update(phase === 'starting' || phase === 'running' || phase === 'queued');
         });
         // Check portal configuration status
         window.api.checkPortalPermissions().then((status) => {
             setPortalConfigStatus(status);
         });
+        return () => {
+            unsubscribeGw2Status();
+        };
     }, [isOpen]);
 
     const handleSave = async () => {
         try {
-            await window.api.saveSettings({ gw2Path, masterPasswordPrompt, themeId, bypassLinuxPortalPrompt });
+            await window.api.saveSettings({
+                gw2Path,
+                masterPasswordPrompt,
+                themeId,
+                bypassLinuxPortalPrompt,
+                gw2AutoUpdateBeforeLaunch,
+                gw2AutoUpdateBackground,
+                gw2AutoUpdateVisible,
+            });
             applyTheme(themeId);
             onClose();
         } catch {
             showToast('Failed to save settings.');
+        }
+    };
+
+    const handleRunGw2Update = async () => {
+        if (isRunningGw2Update) return;
+        setIsRunningGw2Update(true);
+        try {
+            const ok = await window.api.startGw2Update(gw2AutoUpdateVisible);
+            if (!ok) {
+                showToast('GW2 update failed. Check path and permissions.');
+            }
+        } catch {
+            showToast('Failed to start GW2 update.');
+        } finally {
+            setIsRunningGw2Update(false);
         }
     };
 
@@ -132,6 +182,50 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                             <option value="monthly">Once a month</option>
                             <option value="never">Never</option>
                         </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">GW2 Game Updates</label>
+                        <div className="space-y-2 text-sm">
+                            <label className="flex items-center justify-between gap-3">
+                                <span className="text-[var(--theme-text)]">Update before launch</span>
+                                <input
+                                    type="checkbox"
+                                    checked={gw2AutoUpdateBeforeLaunch}
+                                    onChange={(e) => setGw2AutoUpdateBeforeLaunch(e.target.checked)}
+                                    className="w-4 h-4 rounded"
+                                />
+                            </label>
+                            <label className="flex items-center justify-between gap-3">
+                                <span className="text-[var(--theme-text)]">Background update on app start</span>
+                                <input
+                                    type="checkbox"
+                                    checked={gw2AutoUpdateBackground}
+                                    onChange={(e) => setGw2AutoUpdateBackground(e.target.checked)}
+                                    className="w-4 h-4 rounded"
+                                />
+                            </label>
+                            <label className="flex items-center justify-between gap-3">
+                                <span className="text-[var(--theme-text)]">Show patch UI (visible updater)</span>
+                                <input
+                                    type="checkbox"
+                                    checked={gw2AutoUpdateVisible}
+                                    onChange={(e) => setGw2AutoUpdateVisible(e.target.checked)}
+                                    className="w-4 h-4 rounded"
+                                />
+                            </label>
+                            <div className="pt-1">
+                                <p className="text-xs text-[var(--theme-text-dim)]">Status: {gw2UpdateStatusText}</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => { void handleRunGw2Update(); }}
+                                disabled={isRunningGw2Update}
+                                className="w-full px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] disabled:opacity-60 disabled:cursor-not-allowed text-[var(--theme-text)] transition-colors text-sm"
+                            >
+                                {isRunningGw2Update ? 'Updating...' : 'Run GW2 Update Now'}
+                            </button>
+                        </div>
                     </div>
 
                     <div>

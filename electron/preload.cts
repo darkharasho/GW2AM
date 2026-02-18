@@ -72,4 +72,11 @@ contextBridge.exposeInMainWorld('api', {
     configurePortalPermissions: () => ipcRenderer.invoke('configure-portal-permissions'),
     checkPortalPermissions: () => ipcRenderer.invoke('check-portal-permissions'),
     prewarmLinuxInputAuthorization: () => ipcRenderer.invoke('prewarm-linux-input-authorization'),
+    getGw2UpdateStatus: () => ipcRenderer.invoke('get-gw2-update-status'),
+    startGw2Update: (visible = false) => ipcRenderer.invoke('start-gw2-update', visible),
+    onGw2UpdateStatus: (callback: (value: unknown) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+        ipcRenderer.on('gw2-update-status', listener);
+        return () => ipcRenderer.removeListener('gw2-update-status', listener);
+    },
 });
