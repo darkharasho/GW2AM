@@ -26,7 +26,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v25';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v27';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -1195,7 +1195,7 @@ function Try-LoginViaHardenedPath([int]$preferredPid, [string]$emailText, [strin
   }
 }
 
-function Verify-EmailFieldPassive([int]$preferredPid, [string]$emailText) {
+function Verify-EmailFieldPassive([int]$preferredPid, [string]$emailText, [bool]$allowInconclusive = $true) {
   $focusInfo = Get-FocusedElementInfo
   if ($focusInfo.usable -and $focusInfo.isEdit -and -not $focusInfo.isPassword) {
     if (Test-ExactEmailMatch -probeText $focusInfo.value -emailText $emailText) {
@@ -1203,7 +1203,7 @@ function Verify-EmailFieldPassive([int]$preferredPid, [string]$emailText) {
     }
     if ([string]::IsNullOrWhiteSpace($focusInfo.value)) {
       Log-Automation "login-flow-verify-inconclusive mode=passive-empty-focused-edit"
-      return $true
+      return $allowInconclusive
     }
     Log-Automation "login-flow-verify-mismatch mode=passive-focused-edit"
     return $false
@@ -1248,7 +1248,7 @@ function Verify-EmailFieldPassive([int]$preferredPid, [string]$emailText) {
     }
   } catch {}
   Log-Automation "login-flow-verify-inconclusive mode=passive-no-focused-email"
-  return $true
+  return $allowInconclusive
 }
 
 function Click-PlayButtonLauncherFlow([int]$preferredPid) {
@@ -1328,14 +1328,25 @@ function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText
       Log-Automation "login-flow-email-skipped reason=password-field-focused tabs=$emailTabs"
     }
 
+    $emailSetMode = 'skipped'
     if (-not $emailStageSkipped) {
+      $emailSetMode = 'none'
       [void][GW2AMInput]::ReleaseStandardModifiers()
-      $emailSet = Try-TypeIntoFocusedField -text $emailText
+      $emailSet = Try-SetEmailViaUIA -preferredPid $preferredPid -emailText $emailText
+      if ($emailSet) {
+        $emailSetMode = 'uia'
+      }
       if (-not $emailSet) {
-        $emailSet = Try-SetEmailViaUIA -preferredPid $preferredPid -emailText $emailText
+        $emailSet = Try-TypeIntoFocusedField -text $emailText
+        if ($emailSet) {
+          $emailSetMode = 'focused'
+        }
       }
       if (-not $emailSet) {
         $emailSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $emailText
+        if ($emailSet) {
+          $emailSetMode = 'window-message'
+        }
       }
       if (-not $emailSet) {
         Log-Automation "login-flow-email-failed tabs=$emailTabs"
@@ -1356,12 +1367,25 @@ function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText
     }
 
     [void][GW2AMInput]::ReleaseStandardModifiers()
-    $passwordSet = Try-TypeIntoFocusedField -text $passwordText
-    if (-not $passwordSet) {
-      $passwordSet = Try-SetPasswordViaUIA -preferredPid $preferredPid -passwordText $passwordText
+    $passwordSetMode = 'none'
+    $passwordSet = Try-SetPasswordViaUIA -preferredPid $preferredPid -passwordText $passwordText
+    if ($passwordSet) {
+      $passwordSetMode = 'uia'
     }
     if (-not $passwordSet) {
-      $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $passwordText
+      $passwordSet = Try-TypeIntoFocusedField -text $passwordText
+      if ($passwordSet) {
+        $passwordSetMode = 'focused'
+      }
+    }
+    if (-not $passwordSet) {
+      $focusForPasswordType = Get-FocusedElementInfo
+      if ($focusForPasswordType.usable -and $focusForPasswordType.isEdit -and $focusForPasswordType.isPassword) {
+        $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $passwordText
+        if ($passwordSet) {
+          $passwordSetMode = 'window-message'
+        }
+      }
     }
     if (-not $passwordSet) {
       Log-Automation "login-flow-password-failed tabs=$emailTabs"
@@ -1369,9 +1393,21 @@ function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText
     }
 
     if (-not $emailStageSkipped) {
-      $emailVerified = Verify-EmailFieldPassive -preferredPid $preferredPid -emailText $emailText
+      $allowInconclusiveVerify = $true
+      if ($emailSetMode -eq 'window-message') {
+        $allowInconclusiveVerify = $false
+      }
+      $emailVerified = Verify-EmailFieldPassive -preferredPid $preferredPid -emailText $emailText -allowInconclusive $allowInconclusiveVerify
       if (-not $emailVerified) {
         Log-Automation "login-flow-verify-failed tabs=$emailTabs"
+        return $false
+      }
+    }
+
+    if ($passwordSetMode -eq 'window-message') {
+      $passwordFocusVerify = Get-FocusedElementInfo
+      if (-not ($passwordFocusVerify.usable -and $passwordFocusVerify.isEdit -and $passwordFocusVerify.isPassword)) {
+        Log-Automation "login-flow-password-unverified mode=window-message"
         return $false
       }
     }
@@ -1393,7 +1429,7 @@ function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText
     }
     $script:emailTabCount = $emailTabs
     $script:launcherWindowHandle = $handle
-    Log-Automation "login-flow-submitted tabs=$emailTabs enterWindowMessage=$submitViaWindowMessage enterGlobalFallback=$submitUsedGlobalFallback"
+    Log-Automation "login-flow-submitted tabs=$emailTabs emailMode=$emailSetMode passwordMode=$passwordSetMode enterWindowMessage=$submitViaWindowMessage enterGlobalFallback=$submitUsedGlobalFallback"
     return $true
   } finally {
     [void][GW2AMInput]::SetWindowLongPtr($handle, $gwlStyle, $originalStyle)
