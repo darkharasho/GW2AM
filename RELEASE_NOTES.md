@@ -1,16 +1,18 @@
 # Release Notes
 
-Version v0.4.8 — February 18, 2026
+Version v0.4.9 — February 18, 2026
 
 ## 🌟 Highlights
-- Windows automation script updated to v25 for GW2 Account Manager.
+- Windows automation script updated to version win-autologin-v27 for GW2 Account Manager.
+- Improved email and password handling to make login automation more robust.
 
 ## 🛠️ Improvements
-- More reliable window focus: it activates the launcher and confirms the correct window.
-- Fallback by window title added: if the launcher isn’t found via the active process, the app tries the window title to locate it and logs the outcome.
+- The login flow now tries multiple methods to fill in email and password and uses the first method that succeeds.
+- Email verification adapts based on the chosen input path to reduce false inconclusive results.
 
 ## 🧯 Fixes
-- None.
+- Email verification respects a configurable inconclusive outcome, improving reliability.
+- The final login submission log now shows which input methods were used for email and password.
 
 ## ⚠️ Breaking Changes
 - None.
