@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v3';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v6';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -30,12 +30,14 @@ $emailValue = $env:GW2_EMAIL
 $passwordValue = $env:GW2_PASSWORD
 $windowTitles = @('Guild Wars 2', 'Guild Wars2', 'ArenaNet')
 $credentialAttemptCount = 0
-$maxCredentialAttempts = 1
+$maxCredentialAttempts = 2
 $emailSubmitted = $false
 $passwordSubmitted = $false
 $passwordSubmitAttempted = $false
 $passwordFocusLocked = $false
-$passwordTabNudgeUsed = $false
+$emailTabCount = -1
+$tabProfiles = @(14, 1, 6, 2)
+$tabProfileIndex = 0
 $emailSubmittedAt = [DateTime]::MinValue
 $lastStageAdvanceAt = [DateTime]::MinValue
 $resolvedWindowHandle = [IntPtr]::Zero
@@ -46,7 +48,7 @@ $playAttemptIntervalMs = 4000
 $lastPlayAttemptAt = [DateTime]::MinValue
 
 function Log-Automation([string]$message) {
-  Write-Output "[gw2am-automation] $message"
+  [Console]::Out.WriteLine("[gw2am-automation] $message")
 }
 Log-Automation "script-start pid=$pidValue version=${WINDOWS_AUTOMATION_SCRIPT_VERSION}"
 try {
@@ -411,6 +413,58 @@ function Test-LooksLikeEmailField([string]$probeText, [string]$emailText) {
   return ($probe -eq $expected) -or ($probe -like '*@*')
 }
 
+function Wait-ForModifierRelease([int]$timeoutMs = 5000) {
+  $startedAt = Get-Date
+  while ($true) {
+    try {
+      $mods = [System.Windows.Forms.Control]::ModifierKeys
+      $hasShift = (($mods -band [System.Windows.Forms.Keys]::Shift) -ne 0)
+      $hasControl = (($mods -band [System.Windows.Forms.Keys]::Control) -ne 0)
+      $hasAlt = (($mods -band [System.Windows.Forms.Keys]::Alt) -ne 0)
+      if (-not $hasShift -and -not $hasControl -and -not $hasAlt) {
+        return $true
+      }
+    } catch {
+      return $true
+    }
+    if (((Get-Date) - $startedAt).TotalMilliseconds -gt $timeoutMs) {
+      Log-Automation "modifier-release-timeout timeoutMs=$timeoutMs"
+      return $false
+    }
+    Start-Sleep -Milliseconds 90
+  }
+}
+
+function Get-PreferredEmailTabCount() {
+  if ($script:emailTabCount -gt 0) {
+    return $script:emailTabCount
+  }
+  if ($script:tabProfileIndex -lt 0 -or $script:tabProfileIndex -ge $script:tabProfiles.Count) {
+    $script:tabProfileIndex = 0
+  }
+  return [int]$script:tabProfiles[$script:tabProfileIndex]
+}
+
+function Advance-TabProfile() {
+  if ($script:tabProfiles.Count -lt 1) {
+    return
+  }
+  $script:tabProfileIndex = ($script:tabProfileIndex + 1) % $script:tabProfiles.Count
+  $script:emailTabCount = -1
+  Log-Automation "tab-profile-advanced index=$($script:tabProfileIndex) tabs=$([int]$script:tabProfiles[$script:tabProfileIndex])"
+}
+
+function Try-FocusEmailField([int]$preferredPid, [string]$emailText) {
+  $tabsToUse = Get-PreferredEmailTabCount
+
+  if (-not (Focus-ByTabCount -preferredPid $preferredPid -tabCount $tabsToUse)) {
+    return $false
+  }
+  $script:emailTabCount = $tabsToUse
+  Log-Automation "email-anchor tabs=$tabsToUse"
+  return $true
+}
+
 function Focus-ByTabCount([int]$preferredPid, [int]$tabCount) {
   if (-not (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles)) {
     return $false
@@ -428,70 +482,17 @@ function Focus-ByTabCount([int]$preferredPid, [int]$tabCount) {
   return $true
 }
 
-function Detect-EmailTabCount([int]$preferredPid, [string]$emailText) {
-  $detectStart = Get-Date
-  foreach ($tabs in @(1, 14, 2, 6)) {
-    if (((Get-Date) - $detectStart).TotalMilliseconds -gt 3000) {
-      Log-Automation "email-focus-detect-timeout"
-      break
-    }
-    if (-not (Focus-ByTabCount -preferredPid $preferredPid -tabCount $tabs)) {
-      Log-Automation "email-focus-candidate tabs=$tabs unavailable"
-      continue
-    }
-    $probe = Read-FocusedInputText
-    $looksEmail = Test-LooksLikeEmailField -probeText $probe -emailText $emailText
-    $probeLen = if ($probe -eq '__GW2AM_NO_COPY__') { -1 } else { $probe.Length }
-    Log-Automation "email-focus-candidate tabs=$tabs probeLen=$probeLen looksEmail=$looksEmail"
-    if ($looksEmail) {
-      return $tabs
-    }
-  }
-  return -1
-}
-
-function Try-FocusPasswordFromCurrentField([int]$preferredPid, [string]$emailText) {
-  if (-not (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles)) {
-    return $false
-  }
-  Press-TabKey -preferredPid $preferredPid
-  Start-Sleep -Milliseconds 90
-  $probe = Read-FocusedInputText
-  $probeUsable = $probe -ne '__GW2AM_NO_COPY__'
-  $looksEmail = Test-LooksLikeEmailField -probeText $probe -emailText $emailText
-  $probeLen = if ($probe -eq '__GW2AM_NO_COPY__') { -1 } else { $probe.Length }
-  Log-Automation "password-focus-direct-tab probeLen=$probeLen looksEmail=$looksEmail usable=$probeUsable"
-  return ($probeUsable -and -not $looksEmail)
-}
-
-function Focus-PasswordFromEmailAnchor([int]$preferredPid, [int]$emailTabs, [string]$emailText) {
+function Focus-PasswordFromEmailAnchor([int]$preferredPid, [int]$emailTabs, [string]$emailText, [bool]$allowNonCopyableAnchor = $false) {
   if ($emailTabs -lt 1) {
     return $false
   }
   if (-not (Focus-ByTabCount -preferredPid $preferredPid -tabCount $emailTabs)) {
     return $false
   }
-
-  $emailProbe = Read-FocusedInputText
-  $emailProbeUsable = $emailProbe -ne '__GW2AM_NO_COPY__'
-  $emailLooksRight = Test-LooksLikeEmailField -probeText $emailProbe -emailText $emailText
-  $emailProbeLen = if ($emailProbe -eq '__GW2AM_NO_COPY__') { -1 } else { $emailProbe.Length }
-  if (-not $emailProbeUsable -or -not $emailLooksRight) {
-    Log-Automation "email-anchor-miss tabs=$emailTabs probeLen=$emailProbeLen usable=$emailProbeUsable"
-    return $false
-  }
-
   Press-TabKey -preferredPid $preferredPid
-  Start-Sleep -Milliseconds 90
-  $passwordProbe = Read-FocusedInputText
-  $passwordProbeUsable = $passwordProbe -ne '__GW2AM_NO_COPY__'
-  $passwordLooksEmail = Test-LooksLikeEmailField -probeText $passwordProbe -emailText $emailText
-  $passwordProbeLen = if ($passwordProbe -eq '__GW2AM_NO_COPY__') { -1 } else { $passwordProbe.Length }
-  Log-Automation "password-focus-probe emailTabs=$emailTabs probeLen=$passwordProbeLen looksEmail=$passwordLooksEmail usable=$passwordProbeUsable"
-  if (-not $passwordProbeUsable) {
-    return $false
-  }
-  return (-not $passwordLooksEmail)
+  Start-Sleep -Milliseconds 70
+  Log-Automation "password-anchor tabs=$emailTabs"
+  return $true
 }
 
 function Type-IntoWindowViaPostMessage([int]$preferredPid, [string]$text) {
@@ -584,33 +585,6 @@ function Try-SetPasswordViaUIA([int]$preferredPid, [string]$passwordText) {
   }
 }
 
-function Try-SetPasswordInFocusedField([string]$emailText, [string]$passwordText, [bool]$allowBlindOnNonCopyable = $false) {
-  $probe = Read-FocusedInputText
-  $probeUsable = $probe -ne '__GW2AM_NO_COPY__'
-  $looksEmail = Test-LooksLikeEmailField -probeText $probe -emailText $emailText
-  $probeLen = if ($probe -eq '__GW2AM_NO_COPY__') { -1 } else { $probe.Length }
-  Log-Automation "focused-password-attempt probeLen=$probeLen looksEmail=$looksEmail usable=$probeUsable"
-
-  # Never type if focus still appears to be in email.
-  if ($looksEmail) {
-    return $false
-  }
-  # Non-copyable alone is not enough unless focus was already positively locked.
-  if (-not $probeUsable -and -not $allowBlindOnNonCopyable) {
-    return $false
-  }
-
-  Clear-FocusedInput
-  $passwordSet = Type-IntoFocusedInput $passwordText
-  if (-not $passwordSet) {
-    $passwordSet = Paste-IntoFocusedInput $passwordText
-  }
-  if ($passwordSet) {
-    Log-Automation "focused-password-set"
-  }
-  return $passwordSet
-}
-
 for ($i = 0; $i -lt 180; $i++) {
   Start-Sleep -Milliseconds 400
   $activated = Focus-GW2Window -preferredPid $pidValue -titles $windowTitles
@@ -627,23 +601,35 @@ for ($i = 0; $i -lt 180; $i++) {
       }
 
       if (-not $emailSubmitted) {
-        # On Windows the email field is typically ready early.
-        Start-Sleep -Milliseconds 600
+        if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
+          Log-Automation "email-stage-blocked-by-modifier loop=$i"
+          continue
+        }
+
+        if (-not (Try-FocusEmailField -preferredPid $pidValue -emailText $emailValue)) {
+          Log-Automation "email-focus-failed loop=$i"
+          continue
+        }
+
+        Start-Sleep -Milliseconds 220
         Clear-FocusedInput
         $emailSet = (Type-IntoFocusedInput $emailValue)
         if (-not $emailSet) {
           $emailSet = (Paste-IntoFocusedInput $emailValue)
         }
         if (-not $emailSet) {
+          $emailSet = (Type-IntoWindowViaPostMessage -preferredPid $pidValue -text $emailValue)
+        }
+        if (-not $emailSet) {
           Log-Automation "email-entry-failed loop=$i"
+          Advance-TabProfile
           continue
         }
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 60
         Press-EnterKey -preferredPid $pidValue
         $emailSubmitted = $true
         $passwordSubmitAttempted = $false
         $passwordFocusLocked = $false
-        $passwordTabNudgeUsed = $false
         $emailSubmittedAt = Get-Date
         Log-Automation "email-submitted loop=$i"
         continue
@@ -652,7 +638,7 @@ for ($i = 0; $i -lt 180; $i++) {
       if (-not $passwordSubmitted) {
         # Wait for launcher transition from email stage to password stage.
         $elapsedMs = [int](($now - $emailSubmittedAt).TotalMilliseconds)
-        if ($elapsedMs -lt 900) {
+        if ($elapsedMs -lt 650) {
           Log-Automation "waiting-password-stage loop=$i elapsedMs=$([int](($now - $emailSubmittedAt).TotalMilliseconds))"
           continue
         }
@@ -661,29 +647,55 @@ for ($i = 0; $i -lt 180; $i++) {
         }
         $passwordSubmitAttempted = $true
 
-        # Single intentional tab transition from email -> password.
-        if (-not $passwordTabNudgeUsed) {
-          Press-TabKey -preferredPid $pidValue
-          $passwordTabNudgeUsed = $true
-          Log-Automation "password-tab-sent loop=$i"
-          Start-Sleep -Milliseconds 80
+        if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
+          Log-Automation "password-stage-blocked-by-modifier loop=$i"
+          $passwordSubmitAttempted = $false
+          continue
         }
 
-        $passwordSet = Try-SetPasswordInFocusedField -emailText $emailValue -passwordText $passwordValue -allowBlindOnNonCopyable $true
+        $tabsForPassword = Get-PreferredEmailTabCount
+        $passwordFocusLocked = Focus-PasswordFromEmailAnchor -preferredPid $pidValue -emailTabs $tabsForPassword -emailText $emailValue -allowNonCopyableAnchor $true
+        if (-not $passwordFocusLocked) {
+          $passwordFocusLocked = Try-FocusPasswordViaUIA -preferredPid $pidValue
+        }
+        Log-Automation "password-focus-lock loop=$i locked=$passwordFocusLocked tabs=$tabsForPassword"
+
+        $passwordSet = $false
+        if ($passwordFocusLocked) {
+          Clear-FocusedInput
+          $passwordSet = Type-IntoFocusedInput $passwordValue
+          if (-not $passwordSet) {
+            $passwordSet = Paste-IntoFocusedInput $passwordValue
+          }
+        }
         if (-not $passwordSet) {
           $passwordSet = Try-SetPasswordViaUIA -preferredPid $pidValue -passwordText $passwordValue
         }
         if (-not $passwordSet) {
-          Clear-FocusedInput
-          $passwordSet = Type-IntoFocusedInput $passwordValue
+          $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $pidValue -text $passwordValue
         }
         Log-Automation "password-write-attempt loop=$i success=$passwordSet"
+        if (-not $passwordSet) {
+          $credentialAttemptCount++
+          if ($credentialAttemptCount -ge $maxCredentialAttempts) {
+            Log-Automation "credentials-aborted reason=password-write-failed attempts=$credentialAttemptCount"
+            break
+          }
+          Log-Automation "credentials-retry reason=password-write-failed attempts=$credentialAttemptCount"
+          $emailSubmitted = $false
+          $passwordSubmitAttempted = $false
+          $passwordFocusLocked = $false
+          $emailSubmittedAt = [DateTime]::MinValue
+          Advance-TabProfile
+          Start-Sleep -Milliseconds 240
+          continue
+        }
         Start-Sleep -Milliseconds 120
         Press-EnterKey -preferredPid $pidValue
         $passwordSubmitted = $true
         $credentialAttemptCount++
         $credentialsSubmittedAt = Get-Date
-        Log-Automation "credentials-submitted attempt=$credentialAttemptCount mode=single-pass"
+        Log-Automation "credentials-submitted attempt=$credentialAttemptCount mode=anchored"
         continue
       }
     }

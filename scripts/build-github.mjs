@@ -85,6 +85,7 @@ try {
     run(npmCmd, ['run', 'generate:release-notes']);
   }
 
+  run(process.execPath, ['scripts/verify-windows-signing.mjs']);
   run(npmCmd, ['run', 'build:electron']);
   run(npmCmd, ['run', 'build']);
   run(process.execPath, ['scripts/run-electron-builder.mjs']);

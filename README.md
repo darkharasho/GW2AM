@@ -51,6 +51,11 @@ Set `GITHUB_TOKEN` (or `GH_TOKEN`) and `OPENAI_API_KEY`:
 ```bash
 npm run build:github
 ```
+For Windows trust, also configure code signing in your environment:
+- `CSC_LINK`: path/URL/base64 for your `.p12`/`.pfx` signing certificate
+- `CSC_KEY_PASSWORD` (or `WIN_CSC_KEY_PASSWORD`): certificate password
+
+Without signing, Windows Smart App Control and SmartScreen will commonly block the installer.
 
 ### Bump version + publish (patch/minor/major)
 ```bash
@@ -62,6 +67,12 @@ This flow bumps version, updates lockfile, generates AI release notes, commits r
 ```bash
 RELEASE_NOTES_AUTO_APPROVE=1
 ```
+
+### Unsigned test builds (not recommended)
+```bash
+GW2AM_ALLOW_UNSIGNED_WINDOWS=1 npm run build:github
+```
+Use this only for local testing. Unsigned Windows binaries are expected to be flagged.
 
 ## Configuration
 - **Master Password**: set on first launch. If forgotten, resetting app data resets stored accounts.
