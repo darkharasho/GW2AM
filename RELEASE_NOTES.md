@@ -1,15 +1,17 @@
 # Release Notes
 
-Version v0.4.3 — February 18, 2026
+Version v0.4.6 — February 18, 2026
 
 ## 🌟 Highlights
-- Linux automation now supports custom play-click coordinates via GW2_PLAY_X_PERCENT and GW2_PLAY_Y_PERCENT.
+- GW2 automation script updated to win-autologin-v23.
+- GW2 launcher window detection is now more reliable.
 
 ## 🛠️ Improvements
-- Linux automation now retries the Play action up to 20 times to improve reliability.
+- More robust detection when multiple GW2 processes are running.
+- Launcher window is recognized even if the window title varies.
 
 ## 🧯 Fixes
-- Windows automation login flow now handles email and password input more reliably.
+- Login flow now validates that the window is the GW2 launcher before proceeding.
 
 ## ⚠️ Breaking Changes
 - None.
