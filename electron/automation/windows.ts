@@ -26,7 +26,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v24';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v25';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -426,23 +426,33 @@ function Focus-GW2Window([int]$preferredPid, [string[]]$titles, [bool]$force = $
     $activationPid = $preferredPid
   }
 
-  if ($activationPid -gt 0 -and $wshell.AppActivate($activationPid)) {
-    $script:resolvedWindowHandle = [IntPtr]::Zero
-    $script:lastActivationAt = Get-Date
-    Start-Sleep -Milliseconds 90
-    $activatedHandle = Get-MainWindowHandle -preferredPid $preferredPid
-    if ((Is-LauncherWindowHandle -handle $activatedHandle) -and (Is-HandleInPreferredLineage -handle $activatedHandle -preferredPid $preferredPid)) {
-      return $true
-    }
+  if ($activationPid -le 0) {
+    Log-Automation "focus-failure reason=no-launcher-handle preferredPid=$preferredPid"
+    return $false
   }
+  if (-not $wshell.AppActivate($activationPid)) {
+    Log-Automation "focus-failure reason=appactivate-failed activationPid=$activationPid preferredPid=$preferredPid"
+    return $false
+  }
+
+  $script:resolvedWindowHandle = [IntPtr]::Zero
+  $script:lastActivationAt = Get-Date
+  Start-Sleep -Milliseconds 90
+  $activatedHandle = Get-MainWindowHandle -preferredPid $preferredPid
+  if (Is-LauncherWindowHandle -handle $activatedHandle) {
+    return $true
+  }
+
+  $activatedClass = Get-WindowClassName -handle $activatedHandle
+  $activatedOwnerPid = Get-WindowProcessId -handle $activatedHandle
+  Log-Automation "focus-failure reason=activated-not-launcher class=$activatedClass ownerPid=$activatedOwnerPid preferredPid=$preferredPid"
   return $false
 }
 
 function Get-MainWindowHandle([int]$preferredPid) {
   if (
     (Is-UsableWindowHandle $resolvedWindowHandle) -and
-    (Is-LauncherWindowHandle -handle $resolvedWindowHandle) -and
-    (Is-HandleInPreferredLineage -handle $resolvedWindowHandle -preferredPid $preferredPid)
+    (Is-LauncherWindowHandle -handle $resolvedWindowHandle)
   ) {
     return $resolvedWindowHandle
   }
@@ -461,8 +471,7 @@ function Get-MainWindowHandle([int]$preferredPid) {
         $h = [IntPtr]::new([int64]$p.MainWindowHandle)
         if (
           (Is-UsableWindowHandle $h) -and
-          (Is-LauncherWindowHandle -handle $h) -and
-          (Is-HandleInPreferredLineage -handle $h -preferredPid $preferredPid)
+          (Is-LauncherWindowHandle -handle $h)
         ) {
           $script:resolvedWindowHandle = $h
           return $h
@@ -474,11 +483,23 @@ function Get-MainWindowHandle([int]$preferredPid) {
   $titleHandle = Find-LauncherHandleByTitle -titles $windowTitles -preferredPid $preferredPid
   if (
     (Is-UsableWindowHandle $titleHandle) -and
-    (Is-LauncherWindowHandle -handle $titleHandle) -and
-    (Is-HandleInPreferredLineage -handle $titleHandle -preferredPid $preferredPid)
+    (Is-LauncherWindowHandle -handle $titleHandle)
   ) {
     $script:resolvedWindowHandle = $titleHandle
     return $titleHandle
+  }
+
+  if ($preferredPid -gt 0) {
+    $fallbackHandle = Find-LauncherHandleByTitle -titles $windowTitles -preferredPid 0
+    if (
+      (Is-UsableWindowHandle $fallbackHandle) -and
+      (Is-LauncherWindowHandle -handle $fallbackHandle)
+    ) {
+      $fallbackOwnerPid = Get-WindowProcessId -handle $fallbackHandle
+      Log-Automation "launcher-handle-fallback preferredPid=$preferredPid ownerPid=$fallbackOwnerPid"
+      $script:resolvedWindowHandle = $fallbackHandle
+      return $fallbackHandle
+    }
   }
 
   return [IntPtr]::Zero
@@ -1234,8 +1255,7 @@ function Click-PlayButtonLauncherFlow([int]$preferredPid) {
   $h = [IntPtr]::Zero
   if (
     (Is-UsableWindowHandle $launcherWindowHandle) -and
-    (Is-LauncherWindowHandle -handle $launcherWindowHandle) -and
-    (Is-HandleInPreferredLineage -handle $launcherWindowHandle -preferredPid $preferredPid)
+    (Is-LauncherWindowHandle -handle $launcherWindowHandle)
   ) {
     $h = $launcherWindowHandle
     $script:resolvedWindowHandle = $h
