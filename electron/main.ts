@@ -39,6 +39,7 @@ const LINUX_PREWARM_REFOCUS_IDLE_MS = 60 * 60 * 1000;
 const GW2_UPDATE_RECENT_REUSE_MS = 10 * 60 * 1000;
 let windowsProcessSnapshotCache: { timestamp: number; processes: any[] } = { timestamp: 0, processes: [] };
 let linuxLastBlurAt = 0;
+let resolvedWindowsPowerShellPath: string | null = null;
 type Gw2UpdateMode = 'before_launch' | 'background' | 'manual';
 type Gw2UpdatePhase = 'idle' | 'queued' | 'starting' | 'running' | 'completed' | 'failed';
 type Gw2UpdateStatus = {
@@ -137,15 +138,39 @@ process.stderr?.on?.('error', (err: NodeJS.ErrnoException) => {
 });
 
 function logMain(scope: string, message: string): void {
-  console.log(`[GW2AM][Main][${scope}] ${message}`);
+  const line = `[GW2AM][Main][${scope}] ${message}`;
+  console.log(line);
+  log.info(line);
 }
 
 function logMainWarn(scope: string, message: string): void {
-  console.warn(`[GW2AM][Main][${scope}] ${message}`);
+  const line = `[GW2AM][Main][${scope}] ${message}`;
+  console.warn(line);
+  log.warn(line);
 }
 
 function logMainError(scope: string, message: string): void {
-  console.error(`[GW2AM][Main][${scope}] ${message}`);
+  const line = `[GW2AM][Main][${scope}] ${message}`;
+  console.error(line);
+  log.error(line);
+}
+
+function resolveWindowsPowerShellPath(): string {
+  if (resolvedWindowsPowerShellPath) return resolvedWindowsPowerShellPath;
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const candidates = [
+    path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    path.join(systemRoot, 'Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    'powershell.exe',
+  ];
+  for (const candidate of candidates) {
+    if (!candidate.toLowerCase().endsWith('.exe') || fs.existsSync(candidate)) {
+      resolvedWindowsPowerShellPath = candidate;
+      return candidate;
+    }
+  }
+  resolvedWindowsPowerShellPath = 'powershell.exe';
+  return resolvedWindowsPowerShellPath;
 }
 
 
@@ -638,8 +663,9 @@ function getWindowsProcessSnapshot(): any[] {
   }
 
   const query = 'Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress';
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', query], { encoding: 'utf8' });
+  const result = spawnSync(resolveWindowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', query], { encoding: 'utf8' });
   if (result.status !== 0 || !result.stdout) {
+    logMainWarn('windows-process', `PowerShell snapshot failed status=${result.status ?? 'null'} stderr=${String(result.stderr || '').trim()}`);
     return windowsProcessSnapshotCache.processes;
   }
 

@@ -33,6 +33,19 @@ export type AutomationDeps = {
   logMainError: (scope: string, message: string) => void;
   trackAutomationProcess: (accountId: string, pid?: number) => void;
 };
+
+function resolveWindowsPowerShellPath(): string {
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const absoluteCandidates = [
+    path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    path.join(systemRoot, 'Sysnative', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+  ];
+  for (const candidate of absoluteCandidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return 'powershell.exe';
+}
+
 export function startWindowsCredentialAutomation(
   accountId: string,
   pid: number,
@@ -1178,8 +1191,10 @@ Log-Automation "script-finished timeout-or-loop-end credentialAttempts=$credenti
     const automationScriptPath = path.join(automationDir, `win-autologin-${accountId}-${Date.now()}.ps1`);
     fs.writeFileSync(automationScriptPath, automationScript, 'utf8');
 
+    const powerShellExecutable = resolveWindowsPowerShellPath();
+    deps.logMain('automation', `Windows automation using powershell path=${powerShellExecutable}`);
     const automationProcess = spawn(
-      'powershell.exe',
+      powerShellExecutable,
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', automationScriptPath],
       {
         detached: false,
