@@ -1,8 +1,32 @@
-﻿import { app } from 'electron';
+﻿/*
+MIT License
+
+Copyright (c) 2019 Healix
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v6';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v11';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -36,8 +60,9 @@ $passwordSubmitted = $false
 $passwordSubmitAttempted = $false
 $passwordFocusLocked = $false
 $emailTabCount = -1
-$tabProfiles = @(14, 1, 6, 2)
+$tabProfiles = @(1, 2, 6, 14)
 $tabProfileIndex = 0
+$hardenedPathAttempted = $false
 $emailSubmittedAt = [DateTime]::MinValue
 $lastStageAdvanceAt = [DateTime]::MinValue
 $resolvedWindowHandle = [IntPtr]::Zero
@@ -99,6 +124,10 @@ public static class GW2AMInput {
   public static extern uint MapVirtualKey(uint uCode, uint uMapType);
   [DllImport("user32.dll", SetLastError = true)]
   public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr", SetLastError = true)]
+  public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr", SetLastError = true)]
+  public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
   public static uint SendKeyUp(ushort vk) {
@@ -134,6 +163,18 @@ public static class GW2AMInput {
     inputs[0].U.ki.dwFlags = 0u;
     inputs[1].type = 1u;
     inputs[1].U.ki.wVk = 0x09;
+    inputs[1].U.ki.wScan = 0;
+    inputs[1].U.ki.dwFlags = 0x0002u;
+    return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
+  public static uint SendEnter() {
+    INPUT[] inputs = new INPUT[2];
+    inputs[0].type = 1u;
+    inputs[0].U.ki.wVk = 0x0D;
+    inputs[0].U.ki.wScan = 0;
+    inputs[0].U.ki.dwFlags = 0u;
+    inputs[1].type = 1u;
+    inputs[1].U.ki.wVk = 0x0D;
     inputs[1].U.ki.wScan = 0;
     inputs[1].U.ki.dwFlags = 0x0002u;
     return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
@@ -294,6 +335,87 @@ function Click-LauncherBackground([int]$preferredPid) {
   return $true
 }
 
+function Get-LauncherEmptyCoordinate([int]$preferredPid) {
+  $h = Get-MainWindowHandle -preferredPid $preferredPid
+  if ($h -eq [IntPtr]::Zero) {
+    return $null
+  }
+  try {
+    $windowRect = New-Object GW2AMInput+RECT
+    if (-not [GW2AMInput]::GetWindowRect($h, [ref]$windowRect)) {
+      return $null
+    }
+    $width = [Math]::Max(0, $windowRect.Right - $windowRect.Left)
+    $height = [Math]::Max(0, $windowRect.Bottom - $windowRect.Top)
+    if ($width -lt 200 -or $height -lt 200) {
+      return $null
+    }
+    $x = [int]($width * 4 / 5)
+    $y = [int]($height / 2)
+    while ($x -gt 50) {
+      $screenLp = [GW2AMInput]::MakeLParam($windowRect.Left + $x, $windowRect.Top + $y)
+      $hit = [GW2AMInput]::SendMessage($h, 0x0084, [IntPtr]::Zero, $screenLp) # WM_NCHITTEST
+      if ($hit -eq [IntPtr]1) { # HTCLIENT
+        return [PSCustomObject]@{
+          Handle = $h
+          X = $x
+          Y = $y
+        }
+      }
+      $x -= 50
+    }
+  } catch {}
+  return $null
+}
+
+function Click-LauncherCoordinate([IntPtr]$handle, [int]$x, [int]$y) {
+  if ($handle -eq [IntPtr]::Zero) {
+    return $false
+  }
+  try {
+    $lp = [GW2AMInput]::MakeLParam($x, $y)
+    [void][GW2AMInput]::SendMessage($handle, 0x0201, [IntPtr]1, $lp) # WM_LBUTTONDOWN
+    [void][GW2AMInput]::SendMessage($handle, 0x0202, [IntPtr]0, $lp) # WM_LBUTTONUP
+    Start-Sleep -Milliseconds 90
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Click-ClientPercent([int]$preferredPid, [double]$xPercent, [double]$yPercent, [string]$tag = '') {
+  $h = Get-MainWindowHandle -preferredPid $preferredPid
+  if ($h -eq [IntPtr]::Zero) {
+    return $false
+  }
+  try {
+    $rect = New-Object GW2AMInput+RECT
+    if (-not [GW2AMInput]::GetClientRect($h, [ref]$rect)) {
+      return $false
+    }
+    $width = [Math]::Max(0, $rect.Right - $rect.Left)
+    $height = [Math]::Max(0, $rect.Bottom - $rect.Top)
+    if ($width -lt 100 -or $height -lt 100) {
+      return $false
+    }
+    $x = [int][Math]::Round($width * [Math]::Max(0.0, [Math]::Min(1.0, $xPercent)))
+    $y = [int][Math]::Round($height * [Math]::Max(0.0, [Math]::Min(1.0, $yPercent)))
+    $x = [Math]::Max(10, [Math]::Min($width - 10, $x))
+    $y = [Math]::Max(10, [Math]::Min($height - 10, $y))
+    $lp = [GW2AMInput]::MakeLParam($x, $y)
+    [void][GW2AMInput]::SendMessage($h, 0x0200, [IntPtr]0, $lp) # WM_MOUSEMOVE
+    [void][GW2AMInput]::SendMessage($h, 0x0201, [IntPtr]1, $lp) # WM_LBUTTONDOWN
+    [void][GW2AMInput]::SendMessage($h, 0x0202, [IntPtr]0, $lp) # WM_LBUTTONUP
+    Start-Sleep -Milliseconds 110
+    if (-not [string]::IsNullOrWhiteSpace($tag)) {
+      Log-Automation "anchor-click tag=$tag x=$x y=$y"
+    }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
 function Send-KeyToWindow([int]$preferredPid, [int]$virtualKey) {
   $h = Get-MainWindowHandle -preferredPid $preferredPid
   if ($h -eq [IntPtr]::Zero) {
@@ -326,21 +448,19 @@ function Send-TabCountToWindow([int]$preferredPid, [int]$count) {
 }
 
 function Press-TabKey([int]$preferredPid) {
-  $sentToWindow = Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x09
-  if (-not $sentToWindow) {
-    $sent = [GW2AMInput]::SendTab()
-    if ($sent -lt 2) {
-      $wshell.SendKeys('{TAB}')
-    }
-    Start-Sleep -Milliseconds 110
+  $sent = [GW2AMInput]::SendTab()
+  if ($sent -lt 2) {
+    $wshell.SendKeys('{TAB}')
   }
+  Start-Sleep -Milliseconds 110
 }
 
 function Press-EnterKey([int]$preferredPid) {
-  if (-not (Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x0D)) {
+  $sent = [GW2AMInput]::SendEnter()
+  if ($sent -lt 2) {
     $wshell.SendKeys('{ENTER}')
-    Start-Sleep -Milliseconds 110
   }
+  Start-Sleep -Milliseconds 110
 }
 
 function Clear-FocusedInput() {
@@ -349,6 +469,19 @@ function Clear-FocusedInput() {
   Start-Sleep -Milliseconds 70
   $wshell.SendKeys('{DELETE}')
   Start-Sleep -Milliseconds 80
+}
+
+function Try-TypeIntoFocusedField([string]$text) {
+  if ([string]::IsNullOrEmpty($text)) {
+    return $false
+  }
+  Clear-FocusedInput
+  [void][GW2AMInput]::ReleaseStandardModifiers()
+  $ok = Type-IntoFocusedInput $text
+  if (-not $ok) {
+    $ok = Paste-IntoFocusedInput $text
+  }
+  return $ok
 }
 
 function Escape-SendKeys([string]$text) {
@@ -502,10 +635,8 @@ function Focus-ByTabCount([int]$preferredPid, [int]$tabCount) {
   if (-not $clicked) {
     Log-Automation "background-click-fallback tabs=$tabCount"
   }
-  if (-not (Send-TabCountToWindow -preferredPid $preferredPid -count $tabCount)) {
-    for ($n = 0; $n -lt $tabCount; $n++) {
-      Press-TabKey -preferredPid $preferredPid
-    }
+  for ($n = 0; $n -lt $tabCount; $n++) {
+    Press-TabKey -preferredPid $preferredPid
   }
   Start-Sleep -Milliseconds 90
   return $true
@@ -554,6 +685,84 @@ function Test-ExactEmailMatch([string]$probeText, [string]$emailText) {
     return $false
   }
   return $probeText.Trim().ToLowerInvariant() -eq $emailText.Trim().ToLowerInvariant()
+}
+
+function Get-FocusedElementInfo() {
+  $result = [ordered]@{
+    usable = $false
+    isEdit = $false
+    isPassword = $false
+    value = ''
+    name = ''
+    className = ''
+  }
+  try {
+    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if (-not $focused) {
+      return [PSCustomObject]$result
+    }
+    $result.usable = $true
+    try {
+      $controlType = $focused.Current.ControlType
+      if ($controlType -eq [System.Windows.Automation.ControlType]::Edit) {
+        $result.isEdit = $true
+      }
+    } catch {}
+    try { $result.isPassword = [bool]$focused.Current.IsPassword } catch {}
+    try { $result.name = [string]$focused.Current.Name } catch {}
+    try { $result.className = [string]$focused.Current.ClassName } catch {}
+    $valuePatternObj = $null
+    if ($focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePatternObj)) {
+      $valuePattern = [System.Windows.Automation.ValuePattern]$valuePatternObj
+      try { $result.value = [string]$valuePattern.Current.Value } catch {}
+    }
+  } catch {}
+  return [PSCustomObject]$result
+}
+
+function Try-SetEmailViaUIA([int]$preferredPid, [string]$emailText) {
+  try {
+    if ($preferredPid -le 0) { return $false }
+    $p = Get-Process -Id $preferredPid -ErrorAction SilentlyContinue
+    if (-not $p -or -not $p.MainWindowHandle -or $p.MainWindowHandle -eq 0) { return $false }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([int64]$p.MainWindowHandle))
+    if (-not $root) { return $false }
+
+    $editCondition = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Edit
+    )
+    $edits = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+    if (-not $edits -or $edits.Count -eq 0) { return $false }
+
+    for ($idx = 0; $idx -lt $edits.Count; $idx++) {
+      $edit = $edits.Item($idx)
+      $isPassword = $false
+      try { $isPassword = [bool]$edit.Current.IsPassword } catch {}
+      if ($isPassword) { continue }
+
+      $valuePatternObj = $null
+      if ($edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePatternObj)) {
+        $valuePattern = [System.Windows.Automation.ValuePattern]$valuePatternObj
+        try {
+          $valuePattern.SetValue($emailText)
+          Log-Automation "uia-email-set idx=$idx"
+          return $true
+        } catch {}
+      }
+
+      try { $edit.SetFocus() } catch {}
+      Start-Sleep -Milliseconds 90
+      if (Paste-IntoFocusedInput $emailText) {
+        Log-Automation "uia-email-focus-paste idx=$idx"
+        return $true
+      }
+    }
+    return $false
+  } catch {
+    Log-Automation "uia-email-set-exception"
+    return $false
+  }
 }
 
 function Try-FocusPasswordViaUIA([int]$preferredPid) {
@@ -631,6 +840,108 @@ function Try-SetPasswordViaUIA([int]$preferredPid, [string]$passwordText) {
   }
 }
 
+function Try-FillCredentialsViaAnchors([int]$preferredPid, [string]$emailText, [string]$passwordText) {
+  if (-not (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles)) {
+    return $false
+  }
+  $anchorProfiles = @(
+    [PSCustomObject]@{ emailX = 0.34; emailY = 0.29; passwordX = 0.34; passwordY = 0.44; id = 'a' },
+    [PSCustomObject]@{ emailX = 0.28; emailY = 0.30; passwordX = 0.28; passwordY = 0.45; id = 'b' },
+    [PSCustomObject]@{ emailX = 0.40; emailY = 0.31; passwordX = 0.40; passwordY = 0.46; id = 'c' }
+  )
+
+  foreach ($profile in $anchorProfiles) {
+    if (-not (Click-ClientPercent -preferredPid $preferredPid -xPercent $profile.emailX -yPercent $profile.emailY -tag "email-$($profile.id)")) {
+      continue
+    }
+    if (-not (Try-TypeIntoFocusedField -text $emailText)) {
+      continue
+    }
+    Start-Sleep -Milliseconds 80
+
+    if (-not (Click-ClientPercent -preferredPid $preferredPid -xPercent $profile.passwordX -yPercent $profile.passwordY -tag "password-$($profile.id)")) {
+      continue
+    }
+    if (-not (Try-TypeIntoFocusedField -text $passwordText)) {
+      continue
+    }
+    Start-Sleep -Milliseconds 80
+    [void][GW2AMInput]::ReleaseStandardModifiers()
+    Press-EnterKey -preferredPid $preferredPid
+    Log-Automation "fast-anchor-submit profile=$($profile.id)"
+    return $true
+  }
+
+  return $false
+}
+
+function Try-LoginViaHardenedPath([int]$preferredPid, [string]$emailText, [string]$passwordText, [int]$emailTabs = 14) {
+  if (-not (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles)) {
+    return $false
+  }
+  if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
+    return $false
+  }
+  $anchor = Get-LauncherEmptyCoordinate -preferredPid $preferredPid
+  if (-not $anchor) {
+    Log-Automation "hardened-path-no-empty-coordinate"
+    return $false
+  }
+  $handle = [IntPtr]$anchor.Handle
+  $x = [int]$anchor.X
+  $y = [int]$anchor.Y
+
+  $gwlStyle = -16
+  $wsDisabled = 0x08000000
+  $originalStyle = [GW2AMInput]::GetWindowLongPtr($handle, $gwlStyle)
+  $disabledStyle = [IntPtr]([int64]$originalStyle -bor $wsDisabled)
+  [void][GW2AMInput]::SetWindowLongPtr($handle, $gwlStyle, $disabledStyle)
+
+  try {
+    if (-not (Click-LauncherCoordinate -handle $handle -x $x -y $y)) {
+      return $false
+    }
+
+    if (-not (Send-TabCountToWindow -preferredPid $preferredPid -count $emailTabs)) {
+      for ($n = 0; $n -lt $emailTabs; $n++) {
+        Press-TabKey -preferredPid $preferredPid
+      }
+    }
+    Start-Sleep -Milliseconds 80
+
+    $emailSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $emailText
+    if (-not $emailSet) {
+      $emailSet = Try-SetEmailViaUIA -preferredPid $preferredPid -emailText $emailText
+    }
+    if (-not $emailSet) {
+      Log-Automation "hardened-path-email-type-failed"
+      return $false
+    }
+
+    if (-not (Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x09)) {
+      Press-TabKey -preferredPid $preferredPid
+    }
+    Start-Sleep -Milliseconds 80
+
+    $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $passwordText
+    if (-not $passwordSet) {
+      $passwordSet = Try-SetPasswordViaUIA -preferredPid $preferredPid -passwordText $passwordText
+    }
+    if (-not $passwordSet) {
+      Log-Automation "hardened-path-password-type-failed"
+      return $false
+    }
+    [void][GW2AMInput]::ReleaseStandardModifiers()
+    if (-not (Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x0D)) {
+      Press-EnterKey -preferredPid $preferredPid
+    }
+    Log-Automation "hardened-path-submit tabs=$emailTabs"
+    return $true
+  } finally {
+    [void][GW2AMInput]::SetWindowLongPtr($handle, $gwlStyle, $originalStyle)
+  }
+}
+
 for ($i = 0; $i -lt 180; $i++) {
   Start-Sleep -Milliseconds 400
   $activated = Focus-GW2Window -preferredPid $pidValue -titles $windowTitles
@@ -649,6 +960,39 @@ for ($i = 0; $i -lt 180; $i++) {
       if (-not $emailSubmitted) {
         if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
           Log-Automation "email-stage-blocked-by-modifier loop=$i"
+          continue
+        }
+
+        if (-not $hardenedPathAttempted) {
+          $hardenedPathAttempted = $true
+          $hardenedPathOk = Try-LoginViaHardenedPath -preferredPid $pidValue -emailText $emailValue -passwordText $passwordValue -emailTabs 14
+          if ($hardenedPathOk) {
+            $emailSubmitted = $true
+            $passwordSubmitted = $true
+            $passwordSubmitAttempted = $true
+            $passwordFocusLocked = $true
+            $credentialAttemptCount++
+            $emailSubmittedAt = Get-Date
+            $credentialsSubmittedAt = Get-Date
+            Log-Automation "credentials-submitted attempt=$credentialAttemptCount mode=hardened-path"
+            continue
+          }
+          Log-Automation "hardened-path-failed loop=$i"
+          Log-Automation "credentials-aborted reason=hardened-path-failed"
+          break
+        }
+
+        $emailFastSetViaUia = Try-SetEmailViaUIA -preferredPid $pidValue -emailText $emailValue
+        if ($emailFastSetViaUia) {
+          Log-Automation "email-uia-fastset loop=$i"
+          Start-Sleep -Milliseconds 80
+          [void][GW2AMInput]::ReleaseStandardModifiers()
+          Press-EnterKey -preferredPid $pidValue
+          $emailSubmitted = $true
+          $passwordSubmitAttempted = $false
+          $passwordFocusLocked = $false
+          $emailSubmittedAt = Get-Date
+          Log-Automation "email-submitted loop=$i mode=uia"
           continue
         }
 
@@ -680,9 +1024,27 @@ for ($i = 0; $i -lt 180; $i++) {
         $emailVerified = $false
         $emailProbe = Read-FocusedInputText
         if ($emailProbe -eq '__GW2AM_NO_COPY__') {
-          # Non-copyable controls exist in some launcher states; allow a cautious submit path.
-          $emailVerified = $true
-          Log-Automation "email-verify-skipped reason=noncopyable loop=$i"
+          $focusInfo = Get-FocusedElementInfo
+          Log-Automation "email-verify-noncopyable loop=$i isEdit=$($focusInfo.isEdit) isPassword=$($focusInfo.isPassword) name=$($focusInfo.name)"
+          if ($focusInfo.isEdit -and -not $focusInfo.isPassword) {
+            $uiaEmailVerified = Test-ExactEmailMatch -probeText $focusInfo.value -emailText $emailValue
+            if (-not $uiaEmailVerified) {
+              $uiaSetOk = Try-SetEmailViaUIA -preferredPid $pidValue -emailText $emailValue
+              if ($uiaSetOk) {
+                $emailVerified = $true
+                Log-Automation "email-verify-uia-set loop=$i"
+              } else {
+                $emailVerified = $true
+                Log-Automation "email-verify-accepted-noncopyable-edit loop=$i"
+              }
+            } else {
+              $emailVerified = $true
+              Log-Automation "email-verify-uia-match loop=$i"
+            }
+          } else {
+            $emailVerified = $false
+            Log-Automation "email-verify-failed reason=noncopyable-nonedit loop=$i"
+          }
         } else {
           $emailVerified = Test-ExactEmailMatch -probeText $emailProbe -emailText $emailValue
           Log-Automation "email-verify loop=$i probeLen=$($emailProbe.Length) verified=$emailVerified looksEmail=$(Test-LooksLikeEmailField -probeText $emailProbe -emailText $emailValue)"

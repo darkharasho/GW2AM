@@ -72,7 +72,8 @@
       "dist-electron/**/*",
       "package.json",
       "README.md",
-      "RELEASE_NOTES.md"
+      "RELEASE_NOTES.md",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "linux": {
       "target": "AppImage",
