@@ -26,7 +26,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v21';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v23';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -254,18 +254,27 @@ function Find-LauncherHandleByTitle([string[]]$titles) {
     $processes = Get-Process -ErrorAction SilentlyContinue | Where-Object {
       $_.MainWindowHandle -and $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle)
     }
-    foreach ($title in $titles) {
-      $match = $processes | Where-Object { $_.MainWindowTitle.IndexOf($title, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -First 1
-      if ($match -and $match.MainWindowHandle -and $match.MainWindowHandle -ne 0) {
-        return [IntPtr]::new([int64]$match.MainWindowHandle)
+    $gw2Processes = $processes | Where-Object {
+      $name = [string]$_.ProcessName
+      $name.Equals('Gw2-64', [System.StringComparison]::OrdinalIgnoreCase) -or
+      $name.Equals('Gw2', [System.StringComparison]::OrdinalIgnoreCase)
+    }
+
+    foreach ($candidate in $gw2Processes) {
+      $h = [IntPtr]::new([int64]$candidate.MainWindowHandle)
+      if (Is-LauncherWindowHandle -handle $h) {
+        return $h
       }
     }
-    $fallback = $processes | Where-Object {
-      $_.MainWindowTitle.IndexOf('Guild Wars', [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-      $_.MainWindowTitle.IndexOf('ArenaNet', [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-    } | Select-Object -First 1
-    if ($fallback -and $fallback.MainWindowHandle -and $fallback.MainWindowHandle -ne 0) {
-      return [IntPtr]::new([int64]$fallback.MainWindowHandle)
+
+    foreach ($title in $titles) {
+      $match = $gw2Processes | Where-Object { $_.MainWindowTitle.IndexOf($title, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -First 1
+      if ($match -and $match.MainWindowHandle -and $match.MainWindowHandle -ne 0) {
+        $h = [IntPtr]::new([int64]$match.MainWindowHandle)
+        if (Is-LauncherWindowHandle -handle $h) {
+          return $h
+        }
+      }
     }
   } catch {}
   return [IntPtr]::Zero
@@ -291,13 +300,8 @@ function Focus-GW2Window([int]$preferredPid, [string[]]$titles, [bool]$force = $
     $script:resolvedWindowHandle = [IntPtr]::Zero
     $script:lastActivationAt = Get-Date
     Start-Sleep -Milliseconds 90
-    return $true
-  }
-  foreach ($title in $titles) {
-    if ($wshell.AppActivate($title)) {
-      $script:resolvedWindowHandle = [IntPtr]::Zero
-      $script:lastActivationAt = Get-Date
-      Start-Sleep -Milliseconds 90
+    $activatedHandle = Get-MainWindowHandle -preferredPid $preferredPid
+    if (Is-LauncherWindowHandle -handle $activatedHandle) {
       return $true
     }
   }
@@ -318,7 +322,7 @@ function Get-MainWindowHandle([int]$preferredPid) {
       $p = Get-Process -Id $preferredPid -ErrorAction SilentlyContinue
       if ($p -and $p.MainWindowHandle -and $p.MainWindowHandle -ne 0) {
         $h = [IntPtr]::new([int64]$p.MainWindowHandle)
-        if (Is-UsableWindowHandle $h) {
+        if (Is-UsableWindowHandle $h -and (Is-LauncherWindowHandle -handle $h)) {
           $script:resolvedWindowHandle = $h
           return $h
         }
@@ -327,15 +331,9 @@ function Get-MainWindowHandle([int]$preferredPid) {
   } catch {}
 
   $titleHandle = Find-LauncherHandleByTitle -titles $windowTitles
-  if (Is-UsableWindowHandle $titleHandle) {
+  if (Is-UsableWindowHandle $titleHandle -and (Is-LauncherWindowHandle -handle $titleHandle)) {
     $script:resolvedWindowHandle = $titleHandle
     return $titleHandle
-  }
-
-  $foregroundHandle = [GW2AMInput]::GetForegroundWindow()
-  if (Is-UsableWindowHandle $foregroundHandle) {
-    # Do not cache foreground fallback; it may be another app while launcher initializes.
-    return $foregroundHandle
   }
 
   return [IntPtr]::Zero
@@ -363,7 +361,10 @@ function Is-LauncherWindowHandle([IntPtr]$handle) {
   if ([string]::IsNullOrWhiteSpace($className)) {
     return $false
   }
-  return $className.Equals('ArenaNet', [System.StringComparison]::OrdinalIgnoreCase)
+  return (
+    $className.Equals('ArenaNet', [System.StringComparison]::OrdinalIgnoreCase) -or
+    $className.Equals('ArenaNet_Gr_Window_Class', [System.StringComparison]::OrdinalIgnoreCase)
+  )
 }
 
 function Is-LikelyFullscreenWindow([IntPtr]$hWnd) {
@@ -973,6 +974,10 @@ function Try-LoginViaHardenedPath([int]$preferredPid, [string]$emailText, [strin
     return $false
   }
   $handle = [IntPtr]$anchor.Handle
+  if (-not (Is-LauncherWindowHandle -handle $handle)) {
+    Log-Automation "login-flow-invalid-handle reason=non-launcher-window"
+    return $false
+  }
   $x = [int]$anchor.X
   $y = [int]$anchor.Y
 
