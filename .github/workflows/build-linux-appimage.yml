@@ -41,7 +41,7 @@ jobs:
         run: npm ci
 
       - name: Build Linux AppImage
-        run: npm run build:linux
+        run: npm run build:electron && npx vite build && npx electron-builder --linux --publish never
 
       - name: Upload AppImage assets to release
         env:
