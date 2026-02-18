@@ -11,8 +11,6 @@ const releaseRepo = readArgValue('--release-repo');
 const skipReleaseNotes = args.includes('--skip-release-notes') || args.includes('--no-release-notes');
 
 const isWin = process.platform === 'win32';
-const npmCmd = isWin ? 'npm.cmd' : 'npm';
-const gitCmd = isWin ? 'git.exe' : 'git';
 
 function readArgValue(flag) {
   const index = args.indexOf(flag);
@@ -30,11 +28,27 @@ function readBumpArg() {
 
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, { stdio: 'inherit', ...options });
+  if (result.error) {
+    const error = new Error(`Command failed to start: ${command} ${commandArgs.join(' ')} (${result.error.message})`);
+    error.exitCode = 1;
+    throw error;
+  }
   if (result.status !== 0) {
     const error = new Error(`Command failed: ${command} ${commandArgs.join(' ')}`);
     error.exitCode = result.status ?? 1;
     throw error;
   }
+}
+
+function runNpm(args, options = {}) {
+  if (isWin) {
+    return run('cmd.exe', ['/d', '/s', '/c', `npm ${args.join(' ')}`], options);
+  }
+  return run('npm', args, options);
+}
+
+function runGit(args, options = {}) {
+  return run('git', args, options);
 }
 
 function bumpVersion(current, type) {
@@ -75,19 +89,19 @@ try {
     const nextVersion = bumpVersion(currentVersion, bumpType);
     packageJson.version = nextVersion;
     fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
-    run(npmCmd, ['install']);
-    run(gitCmd, ['add', 'package.json', 'package-lock.json']);
-    run(gitCmd, ['commit', '-m', `chore: bump version to ${nextVersion}`]);
-    run(gitCmd, ['push']);
+    runNpm(['install']);
+    runGit(['add', 'package.json', 'package-lock.json']);
+    runGit(['commit', '-m', `chore: bump version to ${nextVersion}`]);
+    runGit(['push']);
   }
 
   if (!skipReleaseNotes) {
-    run(npmCmd, ['run', 'generate:release-notes']);
+    runNpm(['run', 'generate:release-notes']);
   }
 
   run(process.execPath, ['scripts/verify-windows-signing.mjs']);
-  run(npmCmd, ['run', 'build:electron']);
-  run(npmCmd, ['run', 'build']);
+  runNpm(['run', 'build:electron']);
+  runNpm(['run', 'build']);
   run(process.execPath, ['scripts/run-electron-builder.mjs']);
   const releaseArgs = ['scripts/update-github-release.mjs'];
   if (releaseOwner) releaseArgs.push('--release-owner', releaseOwner);
