@@ -785,14 +785,32 @@ function stopAccountProcess(accountId: string): boolean {
 function shouldPromptMasterPassword(): boolean {
   const settings = store.get('settings') as { masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never' } | undefined;
   const mode = settings?.masterPasswordPrompt ?? 'every_time';
+  const intervals: Record<'daily' | 'weekly' | 'monthly', number> = {
+    daily: 24 * 60 * 60 * 1000,
+    weekly: 7 * 24 * 60 * 60 * 1000,
+    monthly: 30 * 24 * 60 * 60 * 1000,
+  };
+  const lastUnlockAt = Number(store.get('security_v2.lastUnlockAt') || 0);
+  const hasValidLastUnlock = Number.isFinite(lastUnlockAt) && lastUnlockAt > 0;
+  const now = Date.now();
+  const elapsed = hasValidLastUnlock ? (now - lastUnlockAt) : Number.POSITIVE_INFINITY;
+  const cadenceExpired = mode in intervals
+    ? elapsed >= intervals[mode as 'daily' | 'weekly' | 'monthly']
+    : true;
 
-  if (!masterKey && mode === 'never') {
+  if (!masterKey && mode !== 'every_time') {
     const cachedValue = String(store.get('security_v2.cachedMasterKey') || '');
     if (cachedValue) {
       const restored = decryptFromStorage(cachedValue);
       if (restored && restored.length > 0) {
-        masterKey = restored;
-        return false;
+        if (mode === 'never') {
+          masterKey = restored;
+          return false;
+        }
+        if (hasValidLastUnlock && !cadenceExpired) {
+          masterKey = restored;
+          return false;
+        }
       }
     }
   }
@@ -804,19 +822,8 @@ function shouldPromptMasterPassword(): boolean {
   // For 'never' and 'every_time' modes, don't prompt again until app restart.
   if (mode === 'never' || mode === 'every_time') return false;
 
-  const lastUnlockAt = Number(store.get('security_v2.lastUnlockAt') || 0);
-  if (!Number.isFinite(lastUnlockAt) || lastUnlockAt <= 0) return true;
-
-  const now = Date.now();
-  const elapsed = now - lastUnlockAt;
-  const intervals: Record<'daily' | 'weekly' | 'monthly', number> = {
-    daily: 24 * 60 * 60 * 1000,
-    weekly: 7 * 24 * 60 * 60 * 1000,
-    monthly: 30 * 24 * 60 * 60 * 1000,
-  };
-
   if (mode in intervals) {
-    return elapsed >= intervals[mode as 'daily' | 'weekly' | 'monthly'];
+    return cadenceExpired;
   }
   return true;
 }
@@ -1273,7 +1280,7 @@ ipcMain.handle('set-master-password', async (_, password) => {
   store.set('security_v2.validationHash', validationHash);
   store.set('security_v2.lastUnlockAt', Date.now());
   const settings = store.get('settings') as { masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never' } | undefined;
-  if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
+  if ((settings?.masterPasswordPrompt ?? 'every_time') !== 'every_time') {
     store.set('security_v2.cachedMasterKey', encryptForStorage(key));
   } else {
     store.set('security_v2.cachedMasterKey', '');
@@ -1298,7 +1305,7 @@ ipcMain.handle('verify-master-password', async (_, password) => {
     masterKey = key;
     store.set('security_v2.lastUnlockAt', Date.now());
     const settings = store.get('settings') as { masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never' } | undefined;
-    if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
+    if ((settings?.masterPasswordPrompt ?? 'every_time') !== 'every_time') {
       store.set('security_v2.cachedMasterKey', encryptForStorage(key));
     } else {
       store.set('security_v2.cachedMasterKey', '');
@@ -1592,7 +1599,8 @@ ipcMain.handle('save-settings', async (_, settings) => {
     linuxInputAuthorizationPrewarmAttempted?: boolean;
   } | undefined) || {};
   store.set('settings', { ...existingSettings, ...settings });
-  if ((settings?.masterPasswordPrompt ?? 'every_time') === 'never') {
+  const mergedMode = (settings?.masterPasswordPrompt ?? existingSettings.masterPasswordPrompt ?? 'every_time');
+  if (mergedMode !== 'every_time') {
     if (masterKey) {
       store.set('security_v2.cachedMasterKey', encryptForStorage(masterKey));
     }
