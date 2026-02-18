@@ -1,16 +1,16 @@
 # Release Notes
 
-Version v0.4.0 — February 18, 2026
+Version v0.4.1 — February 18, 2026
 
 ## 🌟 Highlights
-- Hardened credential paths for Windows and Linux improve credential handling.
-- New Third-Party Notices document included in the repo.
+- New Diagnostics Export button to generate a diagnostic bundle for support.
 
 ## 🛠️ Improvements
-- GitHub Actions workflow now builds the Linux AppImage for easier distribution.
+- Diagnostics export now includes runtime state and recent logs, and opens the folder containing the bundle.
+- Windows automation now resolves the correct PowerShell path on Windows, improving reliability across environments.
 
 ## 🧯 Fixes
-- GW2 auto login on Windows is now more consistent and faster.
+- Fixed dev/prod split in auto login for Windows by using the resolved PowerShell path.
 
 ## ⚠️ Breaking Changes
-- None.
+None.
