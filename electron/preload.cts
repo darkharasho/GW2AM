@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('api', {
 
     saveSettings: (settings: AppSettings) => ipcRenderer.invoke('save-settings', settings),
     getSettings: () => ipcRenderer.invoke('get-settings'),
+    autoLocateGw2Path: () => ipcRenderer.invoke('auto-locate-gw2-path'),
     getRuntimeFlags: () => ipcRenderer.invoke('get-runtime-flags'),
     checkForUpdates: () => ipcRenderer.send('check-for-updates'),
     restartApp: () => ipcRenderer.send('restart-app'),

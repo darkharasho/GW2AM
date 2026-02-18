@@ -43,6 +43,7 @@ export type IpcEvents = {
     'set-account-api-profile': (id: string, profile: { name?: string; created?: string }) => Promise<boolean>;
     'save-settings': (settings: AppSettings) => Promise<void>;
     'get-settings': () => Promise<AppSettings | null>;
+    'auto-locate-gw2-path': () => Promise<{ found: boolean; path?: string; message: string }>;
     'get-runtime-flags': () => Promise<{ isDevShowcase: boolean }>;
     'verify-master-password': (password: string) => Promise<boolean>;
     'set-master-password': (password: string) => Promise<boolean>;

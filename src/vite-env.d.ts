@@ -34,6 +34,7 @@ interface Api {
 
     saveSettings: (settings: AppSettings) => Promise<void>;
     getSettings: () => Promise<AppSettings | null>;
+    autoLocateGw2Path: () => Promise<{ found: boolean; path?: string; message: string }>;
     getRuntimeFlags: () => Promise<{ isDevShowcase: boolean }>;
     checkForUpdates: () => void;
     restartApp: () => void;

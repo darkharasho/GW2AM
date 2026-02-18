@@ -9,6 +9,7 @@ import store from './store.js';
 import { deriveKey, encrypt, decrypt, generateSalt } from './crypto.js';
 import { spawn, spawnSync } from 'child_process';
 import crypto from 'crypto';
+import os from 'os';
 import { LaunchStateMachine } from './launchStateMachine.js';
 import { startWindowsCredentialAutomation as runWindowsCredentialAutomation } from './automation/windows.js';
 import { startLinuxCredentialAutomation as runLinuxCredentialAutomation } from './automation/linux.js';
@@ -470,6 +471,64 @@ function getGw2CommandRegex(): RegExp {
   return escapedConfiguredName
     ? new RegExp(`(?:^|[\\/\\s])(?:gw2-64(?:\\.exe)?|gw2(?:\\.exe)?|${escapedConfiguredName})(?:\\s|$)`, 'i')
     : /(?:^|[\/\s])(?:gw2-64(?:\.exe)?|gw2(?:\.exe)?)(?:\s|$)/i;
+}
+
+function getFirstExistingPath(candidates: string[]): string | null {
+  for (const candidate of candidates) {
+    const normalized = String(candidate || '').trim();
+    if (!normalized) continue;
+    if (fs.existsSync(normalized)) return normalized;
+  }
+  return null;
+}
+
+function autoLocateGw2ExecutablePath(): { found: boolean; path?: string; message: string } {
+  const settings = store.get('settings') as { gw2Path?: string } | undefined;
+  const configured = settings?.gw2Path?.trim();
+  if (configured && fs.existsSync(configured)) {
+    return { found: true, path: configured, message: 'Using configured executable path.' };
+  }
+
+  if (process.platform === 'win32') {
+    const candidates = [
+      path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Guild Wars 2', 'Gw2-64.exe'),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Guild Wars 2', 'Gw2-64.exe'),
+      'C:\\Guild Wars 2\\Gw2-64.exe',
+    ];
+    const found = getFirstExistingPath(candidates);
+    if (found) return { found: true, path: found, message: 'Found Guild Wars 2 executable.' };
+    return { found: false, message: 'Could not auto-locate Guild Wars 2 executable on this system.' };
+  }
+
+  if (process.platform === 'linux') {
+    const whichGw2 = spawnSync('which', ['gw2'], { encoding: 'utf8' });
+    if (whichGw2.status === 0) {
+      const found = String(whichGw2.stdout || '').trim();
+      if (found && fs.existsSync(found)) {
+        return { found: true, path: found, message: 'Found gw2 launcher from PATH.' };
+      }
+    }
+    const whichGw264 = spawnSync('which', ['gw2-64'], { encoding: 'utf8' });
+    if (whichGw264.status === 0) {
+      const found = String(whichGw264.stdout || '').trim();
+      if (found && fs.existsSync(found)) {
+        return { found: true, path: found, message: 'Found gw2-64 launcher from PATH.' };
+      }
+    }
+
+    const home = os.homedir();
+    const candidates = [
+      path.join(home, '.steam', 'steam', 'steamapps', 'common', 'Guild Wars 2', 'Gw2-64.exe'),
+      path.join(home, '.local', 'share', 'Steam', 'steamapps', 'common', 'Guild Wars 2', 'Gw2-64.exe'),
+      '/usr/bin/gw2',
+      '/usr/local/bin/gw2',
+    ];
+    const found = getFirstExistingPath(candidates);
+    if (found) return { found: true, path: found, message: 'Found Guild Wars 2 executable candidate.' };
+    return { found: false, message: 'Could not auto-locate Guild Wars 2 executable on this system.' };
+  }
+
+  return { found: false, message: 'Auto-locate is not supported on this platform.' };
 }
 
 function getAccountMumblePids(accountId: string): number[] {
@@ -1552,6 +1611,10 @@ ipcMain.handle('get-settings', async () => {
     };
   }
   return store.get('settings');
+});
+
+ipcMain.handle('auto-locate-gw2-path', async () => {
+  return autoLocateGw2ExecutablePath();
 });
 
 ipcMain.handle('get-runtime-flags', async () => {

@@ -11,6 +11,7 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [gw2Path, setGw2Path] = useState('');
+    const [isLocatingGw2Path, setIsLocatingGw2Path] = useState(false);
     const [masterPasswordPrompt, setMasterPasswordPrompt] = useState<'every_time' | 'daily' | 'weekly' | 'monthly' | 'never'>('every_time');
     const [themeId, setThemeId] = useState('blood_legion');
     const [bypassLinuxPortalPrompt, setBypassLinuxPortalPrompt] = useState(false);
@@ -56,6 +57,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         }
     };
 
+    const handleAutoLocateGw2Path = async () => {
+        if (isLocatingGw2Path) return;
+        setIsLocatingGw2Path(true);
+        try {
+            const result = await window.api.autoLocateGw2Path();
+            if (result.found && result.path) {
+                setGw2Path(result.path);
+                showToast(`Found: ${result.path}`);
+            } else {
+                showToast(result.message);
+            }
+        } catch {
+            showToast('Failed to auto-locate GW2 path.');
+        } finally {
+            setIsLocatingGw2Path(false);
+        }
+    };
+
     if (!isOpen) return null;
 
     const DiscordIcon = () => (
@@ -86,6 +105,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                                 className="w-full bg-[var(--theme-input-bg)] border border-[var(--theme-border)] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-[var(--theme-gold)] transition-colors text-sm select-text"
                                 placeholder="/path/to/Gw2-64.exe"
                             />
+                            <button
+                                type="button"
+                                onClick={() => { void handleAutoLocateGw2Path(); }}
+                                disabled={isLocatingGw2Path}
+                                className="px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] disabled:opacity-60 disabled:cursor-not-allowed text-[var(--theme-text)] transition-colors text-xs whitespace-nowrap"
+                                title="Attempt to auto-locate Guild Wars 2 executable"
+                            >
+                                {isLocatingGw2Path ? 'Locating...' : 'Auto Locate'}
+                            </button>
                         </div>
                         <p className="text-xs text-[var(--theme-text-dim)] mt-1">Full path to the executable (e.g. C:\Games\Guild Wars 2\Gw2-64.exe or /usr/bin/gw2)</p>
                         <p className="text-xs text-[var(--theme-text-dim)] mt-1">If set, launch uses this executable directly. If empty, launch defaults to Steam.</p>
