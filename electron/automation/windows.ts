@@ -26,7 +26,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v23';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v24';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -83,6 +83,11 @@ $emailTabCount = -1
 $tabProfiles = @(14, 6, 2, 1)
 $tabProfileIndex = 0
 $resolvedWindowHandle = [IntPtr]::Zero
+$launcherWindowHandle = [IntPtr]::Zero
+$lineageProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+$lineageRootPid = 0
+$lineageLastRefreshAt = [DateTime]::MinValue
+$lineageRefreshIntervalMs = 1500
 $credentialsSubmittedAt = [DateTime]::MinValue
 $lastCredentialAttemptAt = [DateTime]::MinValue
 $playAttemptCount = 0
@@ -169,8 +174,14 @@ public static class GW2AMInput {
   public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
   public static uint SendKeyUp(ushort vk) {
     INPUT[] inputs = new INPUT[1];
     inputs[0].type = 1u;
@@ -242,6 +253,12 @@ function Is-UsableWindowHandle([IntPtr]$handle) {
     return $false
   }
   try {
+    if (-not [GW2AMInput]::IsWindow($handle)) {
+      return $false
+    }
+    if (-not [GW2AMInput]::IsWindowVisible($handle)) {
+      return $false
+    }
     $rect = New-Object GW2AMInput+RECT
     return [GW2AMInput]::GetClientRect($handle, [ref]$rect)
   } catch {
@@ -249,7 +266,94 @@ function Is-UsableWindowHandle([IntPtr]$handle) {
   }
 }
 
-function Find-LauncherHandleByTitle([string[]]$titles) {
+function Get-WindowProcessId([IntPtr]$handle) {
+  if ($handle -eq [IntPtr]::Zero) {
+    return 0
+  }
+  try {
+    $pidRef = [uint32]0
+    [void][GW2AMInput]::GetWindowThreadProcessId($handle, [ref]$pidRef)
+    return [int]$pidRef
+  } catch {
+    return 0
+  }
+}
+
+function Refresh-PreferredPidLineage([int]$preferredPid, [bool]$force = $false) {
+  if ($preferredPid -le 0) {
+    return
+  }
+  $now = Get-Date
+  if (
+    -not $force -and
+    $lineageRootPid -eq $preferredPid -and
+    $lineageLastRefreshAt -ne [DateTime]::MinValue -and
+    (($now - $lineageLastRefreshAt).TotalMilliseconds -lt $lineageRefreshIntervalMs)
+  ) {
+    return
+  }
+
+  $newSet = [System.Collections.Generic.HashSet[int]]::new()
+  [void]$newSet.Add($preferredPid)
+  try {
+    $procRows = Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop
+    $childrenByParent = @{}
+    foreach ($row in $procRows) {
+      $parentPid = [int]$row.ParentProcessId
+      $childPid = [int]$row.ProcessId
+      if (-not $childrenByParent.ContainsKey($parentPid)) {
+        $childrenByParent[$parentPid] = New-Object 'System.Collections.Generic.List[int]'
+      }
+      [void]$childrenByParent[$parentPid].Add($childPid)
+    }
+
+    $queue = New-Object 'System.Collections.Generic.Queue[int]'
+    $queue.Enqueue($preferredPid)
+    while ($queue.Count -gt 0) {
+      $currentPid = $queue.Dequeue()
+      if (-not $childrenByParent.ContainsKey($currentPid)) {
+        continue
+      }
+      foreach ($childPid in $childrenByParent[$currentPid]) {
+        if ($newSet.Add($childPid)) {
+          $queue.Enqueue($childPid)
+        }
+      }
+    }
+  } catch {}
+
+  $script:lineageProcessIds = $newSet
+  $script:lineageRootPid = $preferredPid
+  $script:lineageLastRefreshAt = $now
+}
+
+function Is-PidInPreferredLineage([int]$pid, [int]$preferredPid) {
+  if ($preferredPid -le 0 -or $pid -le 0) {
+    return $false
+  }
+  if ($pid -eq $preferredPid) {
+    return $true
+  }
+  Refresh-PreferredPidLineage -preferredPid $preferredPid
+  if ($lineageProcessIds.Contains($pid)) {
+    return $true
+  }
+  Refresh-PreferredPidLineage -preferredPid $preferredPid -force $true
+  return $lineageProcessIds.Contains($pid)
+}
+
+function Is-HandleInPreferredLineage([IntPtr]$handle, [int]$preferredPid) {
+  if ($handle -eq [IntPtr]::Zero) {
+    return $false
+  }
+  if ($preferredPid -le 0) {
+    return $true
+  }
+  $ownerPid = Get-WindowProcessId -handle $handle
+  return Is-PidInPreferredLineage -pid $ownerPid -preferredPid $preferredPid
+}
+
+function Find-LauncherHandleByTitle([string[]]$titles, [int]$preferredPid = 0) {
   try {
     $processes = Get-Process -ErrorAction SilentlyContinue | Where-Object {
       $_.MainWindowHandle -and $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle)
@@ -260,18 +364,36 @@ function Find-LauncherHandleByTitle([string[]]$titles) {
       $name.Equals('Gw2', [System.StringComparison]::OrdinalIgnoreCase)
     }
 
-    foreach ($candidate in $gw2Processes) {
+    if ($preferredPid -gt 0) {
+      $lineageMatches = $gw2Processes | Where-Object {
+        Is-PidInPreferredLineage -pid ([int]$_.Id) -preferredPid $preferredPid
+      }
+      if (-not $lineageMatches -or $lineageMatches.Count -lt 1) {
+        return [IntPtr]::Zero
+      }
+      $gw2Processes = $lineageMatches
+    }
+
+    $orderedCandidates = @()
+    if ($preferredPid -gt 0) {
+      $orderedCandidates += ($gw2Processes | Where-Object { [int]$_.Id -eq $preferredPid })
+      $orderedCandidates += ($gw2Processes | Where-Object { [int]$_.Id -ne $preferredPid })
+    } else {
+      $orderedCandidates = $gw2Processes
+    }
+
+    foreach ($candidate in $orderedCandidates) {
       $h = [IntPtr]::new([int64]$candidate.MainWindowHandle)
-      if (Is-LauncherWindowHandle -handle $h) {
+      if ((Is-LauncherWindowHandle -handle $h) -and (Is-HandleInPreferredLineage -handle $h -preferredPid $preferredPid)) {
         return $h
       }
     }
 
     foreach ($title in $titles) {
-      $match = $gw2Processes | Where-Object { $_.MainWindowTitle.IndexOf($title, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -First 1
+      $match = $orderedCandidates | Where-Object { $_.MainWindowTitle.IndexOf($title, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -First 1
       if ($match -and $match.MainWindowHandle -and $match.MainWindowHandle -ne 0) {
         $h = [IntPtr]::new([int64]$match.MainWindowHandle)
-        if (Is-LauncherWindowHandle -handle $h) {
+        if ((Is-LauncherWindowHandle -handle $h) -and (Is-HandleInPreferredLineage -handle $h -preferredPid $preferredPid)) {
           return $h
         }
       }
@@ -296,12 +418,20 @@ function Focus-GW2Window([int]$preferredPid, [string[]]$titles, [bool]$force = $
     }
   }
 
-  if ($preferredPid -gt 0 -and $wshell.AppActivate($preferredPid)) {
+  $activationPid = 0
+  if ($handle -ne [IntPtr]::Zero) {
+    $activationPid = Get-WindowProcessId -handle $handle
+  }
+  if ($activationPid -le 0) {
+    $activationPid = $preferredPid
+  }
+
+  if ($activationPid -gt 0 -and $wshell.AppActivate($activationPid)) {
     $script:resolvedWindowHandle = [IntPtr]::Zero
     $script:lastActivationAt = Get-Date
     Start-Sleep -Milliseconds 90
     $activatedHandle = Get-MainWindowHandle -preferredPid $preferredPid
-    if (Is-LauncherWindowHandle -handle $activatedHandle) {
+    if ((Is-LauncherWindowHandle -handle $activatedHandle) -and (Is-HandleInPreferredLineage -handle $activatedHandle -preferredPid $preferredPid)) {
       return $true
     }
   }
@@ -309,12 +439,19 @@ function Focus-GW2Window([int]$preferredPid, [string[]]$titles, [bool]$force = $
 }
 
 function Get-MainWindowHandle([int]$preferredPid) {
-  if (Is-UsableWindowHandle $resolvedWindowHandle) {
+  if (
+    (Is-UsableWindowHandle $resolvedWindowHandle) -and
+    (Is-LauncherWindowHandle -handle $resolvedWindowHandle) -and
+    (Is-HandleInPreferredLineage -handle $resolvedWindowHandle -preferredPid $preferredPid)
+  ) {
     return $resolvedWindowHandle
   }
+  $script:resolvedWindowHandle = [IntPtr]::Zero
 
   if ($preferredPid -le 0) {
     $preferredPid = 0
+  } else {
+    Refresh-PreferredPidLineage -preferredPid $preferredPid
   }
 
   try {
@@ -322,7 +459,11 @@ function Get-MainWindowHandle([int]$preferredPid) {
       $p = Get-Process -Id $preferredPid -ErrorAction SilentlyContinue
       if ($p -and $p.MainWindowHandle -and $p.MainWindowHandle -ne 0) {
         $h = [IntPtr]::new([int64]$p.MainWindowHandle)
-        if (Is-UsableWindowHandle $h -and (Is-LauncherWindowHandle -handle $h)) {
+        if (
+          (Is-UsableWindowHandle $h) -and
+          (Is-LauncherWindowHandle -handle $h) -and
+          (Is-HandleInPreferredLineage -handle $h -preferredPid $preferredPid)
+        ) {
           $script:resolvedWindowHandle = $h
           return $h
         }
@@ -330,8 +471,12 @@ function Get-MainWindowHandle([int]$preferredPid) {
     }
   } catch {}
 
-  $titleHandle = Find-LauncherHandleByTitle -titles $windowTitles
-  if (Is-UsableWindowHandle $titleHandle -and (Is-LauncherWindowHandle -handle $titleHandle)) {
+  $titleHandle = Find-LauncherHandleByTitle -titles $windowTitles -preferredPid $preferredPid
+  if (
+    (Is-UsableWindowHandle $titleHandle) -and
+    (Is-LauncherWindowHandle -handle $titleHandle) -and
+    (Is-HandleInPreferredLineage -handle $titleHandle -preferredPid $preferredPid)
+  ) {
     $script:resolvedWindowHandle = $titleHandle
     return $titleHandle
   }
@@ -808,10 +953,9 @@ function Get-FocusedElementInfo() {
 
 function Try-SetEmailViaUIA([int]$preferredPid, [string]$emailText) {
   try {
-    if ($preferredPid -le 0) { return $false }
-    $p = Get-Process -Id $preferredPid -ErrorAction SilentlyContinue
-    if (-not $p -or -not $p.MainWindowHandle -or $p.MainWindowHandle -eq 0) { return $false }
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([int64]$p.MainWindowHandle))
+    $mainHandle = Get-MainWindowHandle -preferredPid $preferredPid
+    if ($mainHandle -eq [IntPtr]::Zero) { return $false }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($mainHandle)
     if (-not $root) { return $false }
 
     $editCondition = New-Object System.Windows.Automation.PropertyCondition(
@@ -853,10 +997,9 @@ function Try-SetEmailViaUIA([int]$preferredPid, [string]$emailText) {
 
 function Try-FocusPasswordViaUIA([int]$preferredPid) {
   try {
-    if ($preferredPid -le 0) { return $false }
-    $p = Get-Process -Id $preferredPid -ErrorAction SilentlyContinue
-    if (-not $p -or -not $p.MainWindowHandle -or $p.MainWindowHandle -eq 0) { return $false }
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([int64]$p.MainWindowHandle))
+    $mainHandle = Get-MainWindowHandle -preferredPid $preferredPid
+    if ($mainHandle -eq [IntPtr]::Zero) { return $false }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($mainHandle)
     if (-not $root) { return $false }
 
     $editCondition = New-Object System.Windows.Automation.PropertyCondition(
@@ -884,10 +1027,9 @@ function Try-FocusPasswordViaUIA([int]$preferredPid) {
 
 function Try-SetPasswordViaUIA([int]$preferredPid, [string]$passwordText) {
   try {
-    if ($preferredPid -le 0) { return $false }
-    $p = Get-Process -Id $preferredPid -ErrorAction SilentlyContinue
-    if (-not $p -or -not $p.MainWindowHandle -or $p.MainWindowHandle -eq 0) { return $false }
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([int64]$p.MainWindowHandle))
+    $mainHandle = Get-MainWindowHandle -preferredPid $preferredPid
+    if ($mainHandle -eq [IntPtr]::Zero) { return $false }
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($mainHandle)
     if (-not $root) { return $false }
 
     $editCondition = New-Object System.Windows.Automation.PropertyCondition(
@@ -1045,12 +1187,64 @@ function Verify-EmailFieldPassive([int]$preferredPid, [string]$emailText) {
     Log-Automation "login-flow-verify-mismatch mode=passive-focused-edit"
     return $false
   }
+  try {
+    $mainHandle = Get-MainWindowHandle -preferredPid $preferredPid
+    if ($mainHandle -ne [IntPtr]::Zero) {
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($mainHandle)
+      if ($root) {
+        $editCondition = New-Object System.Windows.Automation.PropertyCondition(
+          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+          [System.Windows.Automation.ControlType]::Edit
+        )
+        $edits = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+        if ($edits -and $edits.Count -gt 0) {
+          $sawReadableValue = $false
+          for ($idx = 0; $idx -lt $edits.Count; $idx++) {
+            $edit = $edits.Item($idx)
+            $isPassword = $false
+            try { $isPassword = [bool]$edit.Current.IsPassword } catch {}
+            if ($isPassword) {
+              continue
+            }
+            $valuePatternObj = $null
+            if (-not $edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePatternObj)) {
+              continue
+            }
+            $valuePattern = [System.Windows.Automation.ValuePattern]$valuePatternObj
+            $value = ''
+            try { $value = [string]$valuePattern.Current.Value } catch {}
+            $sawReadableValue = $true
+            if (Test-ExactEmailMatch -probeText $value -emailText $emailText) {
+              return $true
+            }
+          }
+          if ($sawReadableValue) {
+            Log-Automation "login-flow-verify-mismatch mode=passive-uia-email-scan"
+            return $false
+          }
+        }
+      }
+    }
+  } catch {}
   Log-Automation "login-flow-verify-inconclusive mode=passive-no-focused-email"
   return $true
 }
 
 function Click-PlayButtonLauncherFlow([int]$preferredPid) {
-  $h = Get-MainWindowHandle -preferredPid $preferredPid
+  $h = [IntPtr]::Zero
+  if (
+    (Is-UsableWindowHandle $launcherWindowHandle) -and
+    (Is-LauncherWindowHandle -handle $launcherWindowHandle) -and
+    (Is-HandleInPreferredLineage -handle $launcherWindowHandle -preferredPid $preferredPid)
+  ) {
+    $h = $launcherWindowHandle
+    $script:resolvedWindowHandle = $h
+  } else {
+    $h = Get-MainWindowHandle -preferredPid $preferredPid
+    if ($h -ne [IntPtr]::Zero) {
+      $script:launcherWindowHandle = $h
+    }
+  }
   if (-not (Is-LauncherWindowHandle -handle $h)) {
     return $false
   }
@@ -1178,6 +1372,7 @@ function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText
       }
     }
     $script:emailTabCount = $emailTabs
+    $script:launcherWindowHandle = $handle
     Log-Automation "login-flow-submitted tabs=$emailTabs enterWindowMessage=$submitViaWindowMessage enterGlobalFallback=$submitUsedGlobalFallback"
     return $true
   } finally {
