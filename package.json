@@ -1,7 +1,7 @@
 {
   "name": "gw2-account-manager",
   "private": true,
-  "version": "0.4.5",
+  "version": "0.4.6",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
