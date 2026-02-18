@@ -1,15 +1,16 @@
 # Release Notes
 
-Version v0.3.9 — February 18, 2026
+Version v0.4.0 — February 18, 2026
 
 ## 🌟 Highlights
-- GW2 updater logic added.
+- Hardened credential paths for Windows and Linux improve credential handling.
+- New Third-Party Notices document included in the repo.
 
 ## 🛠️ Improvements
-- Linux autofill paths hardened for more reliable automated login.
+- GitHub Actions workflow now builds the Linux AppImage for easier distribution.
 
 ## 🧯 Fixes
-- Fix login remember-me behavior and allow password-only entries during login.
+- GW2 auto login on Windows is now more consistent and faster.
 
 ## ⚠️ Breaking Changes
 - None.
