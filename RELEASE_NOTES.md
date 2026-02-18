@@ -1,16 +1,17 @@
 # Release Notes
 
-Version v0.4.1 — February 18, 2026
+Version v0.4.2 — February 18, 2026
 
 ## 🌟 Highlights
-- New Diagnostics Export button to generate a diagnostic bundle for support.
+- Windows launcher automation improvements for more reliable login and in-game flow.
+- Linux AppImage workflow updated to streamline builds.
 
 ## 🛠️ Improvements
-- Diagnostics export now includes runtime state and recent logs, and opens the folder containing the bundle.
-- Windows automation now resolves the correct PowerShell path on Windows, improving reliability across environments.
+- Windows automation now uses the newer win-autologin-v20 script for better reliability.
+- Automation now logs startup mode and whether custom play coordinates are used to aid troubleshooting.
 
 ## 🧯 Fixes
-- Fixed dev/prod split in auto login for Windows by using the resolved PowerShell path.
+- Stabilized launcher login and play on Windows to prevent extra in-game input.
 
 ## ⚠️ Breaking Changes
 None.
