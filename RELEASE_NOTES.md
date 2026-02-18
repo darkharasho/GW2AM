@@ -1,14 +1,12 @@
 # Release Notes
 
-Version v0.3.2 — February 15, 2026
+Version v0.3.3 — February 17, 2026
 
 ## 🌟 Highlights
-- On Linux, GW2AM can auto-configure remote-desktop portal permissions via Flatpak when available.
-- On the first Linux launch, the app prewarms input authorization to speed up access.
+- Linux input prewarm now retriggers after 1 hour idle when the app regains focus, and can be triggered manually from a subtle footer icon beside Settings.
 
 ## 🛠️ Improvements
-- Settings are merged with existing preferences when saved, avoiding overwriting other options.
-- Linux portal permission checks report status more clearly.
+None.
 
 ## 🧯 Fixes
 None.
