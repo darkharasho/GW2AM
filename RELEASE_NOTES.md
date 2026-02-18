@@ -1,12 +1,14 @@
 # Release Notes
 
-Version v0.3.3 — February 17, 2026
+Version v0.3.4 — February 17, 2026
 
 ## 🌟 Highlights
-- Linux input prewarm now retriggers after 1 hour idle when the app regains focus, and can be triggered manually from a subtle footer icon beside Settings.
+- Auto-locate feature to find the Guild Wars 2 executable path in settings.
+- In-settings Auto Locate button provides quick feedback on results.
 
 ## 🛠️ Improvements
-- Settings now includes an `Auto Locate` button beside the Guild Wars 2 path field to quickly detect a local executable path.
+- If a path is configured, the app uses it; otherwise it searches Windows and Linux for GW2.
+- Triggering auto-locate shows status and a toast with the result or an informational message.
 
 ## 🧯 Fixes
 None.
