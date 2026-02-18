@@ -34,7 +34,9 @@ const launchStateMachine = new LaunchStateMachine();
 const SAFE_STORAGE_PREFIX = 'safe:';
 const STEAM_GW2_APP_ID = '1284210';
 const WINDOWS_PROCESS_SNAPSHOT_TTL_MS = 1500;
+const LINUX_PREWARM_REFOCUS_IDLE_MS = 60 * 60 * 1000;
 let windowsProcessSnapshotCache: { timestamp: number; processes: any[] } = { timestamp: 0, processes: [] };
+let linuxLastBlurAt = 0;
 
 function encryptForStorage(key: Buffer): string {
   if (safeStorage.isEncryptionAvailable()) {
@@ -905,58 +907,79 @@ function configureLinuxRemoteDesktopPermissionBestEffort(): { success: boolean; 
   }
 }
 
-function prewarmLinuxInputAuthorizationOnFirstOpen(): void {
-  if (process.platform !== 'linux') return;
+async function triggerLinuxInputAuthorizationPrewarm(reason: 'startup' | 'refocus_idle' | 'manual'): Promise<{ success: boolean; message: string }> {
+  if (process.platform !== 'linux') {
+    return { success: false, message: 'Only available on Linux' };
+  }
 
-  setTimeout(() => {
-    const xdotoolCheck = spawnSync('which', ['xdotool'], { encoding: 'utf8' });
-    if (xdotoolCheck.status !== 0) {
-      logMainWarn('portal', 'Skipping Linux input prewarm: xdotool is not installed.');
-      return;
+  const xdotoolCheck = spawnSync('which', ['xdotool'], { encoding: 'utf8' });
+  if (xdotoolCheck.status !== 0) {
+    const message = 'Skipping Linux input prewarm: xdotool is not installed.';
+    logMainWarn('portal', message);
+    return { success: false, message };
+  }
+
+  if (!isLinuxRemoteDesktopPermissionConfigured()) {
+    const configureResult = configureLinuxRemoteDesktopPermissionBestEffort();
+    if (configureResult.success) {
+      logMain('portal', `Auto-configured remote-desktop permissions before prewarm: ${configureResult.message}`);
+    } else {
+      logMainWarn('portal', `Prewarm auto-configure failed: ${configureResult.message}`);
     }
+  }
 
-    if (!isLinuxRemoteDesktopPermissionConfigured()) {
-      const configureResult = configureLinuxRemoteDesktopPermissionBestEffort();
-      if (configureResult.success) {
-        logMain('portal', `Auto-configured remote-desktop permissions on startup: ${configureResult.message}`);
-      }
-      if (!configureResult.success) {
-        logMainWarn('portal', `Startup auto-configure failed: ${configureResult.message}`);
-      }
-    }
+  const prewarmScript = `
+    win_id="$(xdotool search --onlyvisible --pid "${process.pid}" 2>/dev/null | head -n 1)"
+    if [ -z "$win_id" ]; then
+      win_id="$(xdotool getactivewindow 2>/dev/null || true)"
+    fi
 
-    const prewarmScript = `
-      win_id="$(xdotool search --onlyvisible --pid "${process.pid}" 2>/dev/null | head -n 1)"
-      if [ -z "$win_id" ]; then
-        win_id="$(xdotool getactivewindow 2>/dev/null || true)"
-      fi
+    if [ -z "$win_id" ]; then
+      exit 1
+    fi
 
-      if [ -z "$win_id" ]; then
-        exit 1
-      fi
+    xdotool windowactivate --sync "$win_id" 2>/dev/null || true
+    xdotool key --clearmodifiers --window "$win_id" a
+  `;
 
-      xdotool windowactivate --sync "$win_id" 2>/dev/null || true
-      xdotool key --clearmodifiers --window "$win_id" a
-    `;
+  return await new Promise((resolve) => {
     const child = spawn('/bin/bash', ['-c', prewarmScript], {
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stderrOutput = '';
+    let resolved = false;
     child.stderr?.on('data', (chunk) => {
       stderrOutput += String(chunk);
     });
     child.on('error', (error) => {
-      logMainWarn('portal', `Linux input prewarm failed: ${error.message}`);
+      if (resolved) return;
+      resolved = true;
+      const message = `Linux input prewarm failed: ${error.message}`;
+      logMainWarn('portal', `${message} reason=${reason}`);
+      resolve({ success: false, message });
     });
     child.on('exit', (code) => {
+      if (resolved) return;
+      resolved = true;
       if (code === 0) {
-        logMain('portal', 'Triggered Linux input authorization prewarm.');
+        const message = 'Triggered Linux input authorization prewarm.';
+        logMain('portal', `${message} reason=${reason}`);
+        resolve({ success: true, message });
         return;
       }
       const details = stderrOutput.trim();
-      logMainWarn('portal', `Linux input prewarm exited with code=${code ?? 'null'}${details ? ` stderr=${details}` : ''}`);
+      const message = `Linux input prewarm exited with code=${code ?? 'null'}${details ? ` stderr=${details}` : ''}`;
+      logMainWarn('portal', `${message} reason=${reason}`);
+      resolve({ success: false, message });
     });
+  });
+}
+
+function prewarmLinuxInputAuthorizationOnFirstOpen(): void {
+  if (process.platform !== 'linux') return;
+  setTimeout(() => {
+    void triggerLinuxInputAuthorizationPrewarm('startup');
   }, 350);
 }
 
@@ -996,6 +1019,20 @@ const createWindow = () => {
   mainWindow.on('maximize', () => persistWindowState());
   mainWindow.on('unmaximize', () => persistWindowState());
   mainWindow.on('close', () => persistWindowState(true));
+  if (process.platform === 'linux') {
+    mainWindow.on('blur', () => {
+      linuxLastBlurAt = Date.now();
+    });
+    mainWindow.on('focus', () => {
+      if (!linuxLastBlurAt) return;
+      const idleMs = Date.now() - linuxLastBlurAt;
+      linuxLastBlurAt = 0;
+      if (idleMs < LINUX_PREWARM_REFOCUS_IDLE_MS) return;
+      setTimeout(() => {
+        void triggerLinuxInputAuthorizationPrewarm('refocus_idle');
+      }, 150);
+    });
+  }
 
   if (storedWindowState.isMaximized) {
     mainWindow.maximize();
@@ -1555,4 +1592,8 @@ ipcMain.handle('configure-portal-permissions', async () => {
   }
   logMainWarn('portal', result.message);
   return { success: false, message: result.message };
+});
+
+ipcMain.handle('prewarm-linux-input-authorization', async () => {
+  return triggerLinuxInputAuthorizationPrewarm('manual');
 });

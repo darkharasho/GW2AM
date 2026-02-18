@@ -56,4 +56,5 @@ export type IpcEvents = {
     'reset-app': () => void;
     'configure-portal-permissions': () => Promise<{ success: boolean; message: string }>;
     'check-portal-permissions': () => Promise<{ configured: boolean; message: string }>;
+    'prewarm-linux-input-authorization': () => Promise<{ success: boolean; message: string }>;
 }

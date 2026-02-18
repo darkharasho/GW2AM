@@ -55,6 +55,7 @@ interface Api {
     resetApp: () => void;
     configurePortalPermissions: () => Promise<{ success: boolean; message: string }>;
     checkPortalPermissions: () => Promise<{ configured: boolean; message: string }>;
+    prewarmLinuxInputAuthorization: () => Promise<{ success: boolean; message: string }>;
 }
 
 declare global {

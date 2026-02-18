@@ -70,4 +70,5 @@ contextBridge.exposeInMainWorld('api', {
     resetApp: () => ipcRenderer.send('reset-app'),
     configurePortalPermissions: () => ipcRenderer.invoke('configure-portal-permissions'),
     checkPortalPermissions: () => ipcRenderer.invoke('check-portal-permissions'),
+    prewarmLinuxInputAuthorization: () => ipcRenderer.invoke('prewarm-linux-input-authorization'),
 });
