@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
     shouldShowWhatsNew: () => ipcRenderer.invoke('should-show-whats-new'),
     setLastSeenVersion: (version: string) => ipcRenderer.invoke('set-last-seen-version', version),
     openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+    exportDiagnostics: () => ipcRenderer.invoke('export-diagnostics'),
     onUpdateMessage: (callback: (value: string) => void) => {
         const listener = (_event: Electron.IpcRendererEvent, value: string) => callback(value);
         ipcRenderer.on('update-message', listener);

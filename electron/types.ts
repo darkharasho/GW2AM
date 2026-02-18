@@ -67,6 +67,7 @@ export type IpcEvents = {
     'should-show-whats-new': () => Promise<{ version: string; shouldShow: boolean }>;
     'set-last-seen-version': (version: string) => Promise<boolean>;
     'open-external': (url: string) => Promise<boolean>;
+    'export-diagnostics': () => Promise<{ success: boolean; path?: string; message: string }>;
     'reset-app': () => void;
     'configure-portal-permissions': () => Promise<{ success: boolean; message: string }>;
     'check-portal-permissions': () => Promise<{ configured: boolean; message: string }>;

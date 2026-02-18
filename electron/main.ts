@@ -6,6 +6,7 @@ import { dirname } from 'path';
 import log from 'electron-log';
 import electronUpdaterPkg from 'electron-updater';
 import store from './store.js';
+import type { Account, AppSettings } from './types.js';
 import { deriveKey, encrypt, decrypt, generateSalt } from './crypto.js';
 import { spawn, spawnSync } from 'child_process';
 import crypto from 'crypto';
@@ -171,6 +172,78 @@ function resolveWindowsPowerShellPath(): string {
   }
   resolvedWindowsPowerShellPath = 'powershell.exe';
   return resolvedWindowsPowerShellPath;
+}
+
+function readFileTail(filePath: string, maxBytes = 200 * 1024): string {
+  if (!fs.existsSync(filePath)) return '';
+  const stats = fs.statSync(filePath);
+  const size = stats.size;
+  const start = Math.max(0, size - maxBytes);
+  const bytesToRead = Math.max(0, size - start);
+  if (bytesToRead <= 0) return '';
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    fs.readSync(fd, buffer, 0, bytesToRead, start);
+    return buffer.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function exportDiagnosticsBundle(): { success: boolean; path?: string; message: string } {
+  try {
+    const now = new Date();
+    const iso = now.toISOString();
+    const stamp = iso.replace(/[:.]/g, '-');
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    const mainLogPath = path.join(logsDir, 'main.log');
+    const diagnosticsDir = path.join(app.getPath('documents'), 'GW2AM-Diagnostics');
+    fs.mkdirSync(diagnosticsDir, { recursive: true });
+    const outPath = path.join(diagnosticsDir, `gw2am-diagnostics-${stamp}.txt`);
+
+    const settings = (store.get('settings') as AppSettings | undefined) || null;
+    const accounts = ((store.get('accounts') as Account[] | undefined) || []);
+    const launchStates = launchStateMachine.getAllStates();
+    const logTail = readFileTail(mainLogPath);
+
+    const content = [
+      'GW2 Account Manager Diagnostics',
+      `GeneratedAt: ${iso}`,
+      '',
+      'Runtime',
+      `Version: ${app.getVersion()}`,
+      `Packaged: ${String(app.isPackaged)}`,
+      `Platform: ${process.platform}`,
+      `Arch: ${process.arch}`,
+      `Electron: ${process.versions.electron}`,
+      `Node: ${process.versions.node}`,
+      '',
+      'Paths',
+      `UserData: ${app.getPath('userData')}`,
+      `LogsDir: ${logsDir}`,
+      `MainLog: ${mainLogPath}`,
+      '',
+      'State',
+      `AccountCount: ${accounts.length}`,
+      `LaunchStates: ${JSON.stringify(launchStates, null, 2)}`,
+      `Settings: ${JSON.stringify(settings, null, 2)}`,
+      `Gw2UpdateStatus: ${JSON.stringify(gw2UpdateStatus, null, 2)}`,
+      '',
+      'RecentMainLog',
+      logTail || '(main.log not found or empty)',
+      '',
+    ].join('\n');
+
+    fs.writeFileSync(outPath, content, 'utf8');
+    shell.showItemInFolder(outPath);
+    logMain('diagnostics', `Exported diagnostics bundle: ${outPath}`);
+    return { success: true, path: outPath, message: 'Diagnostics exported successfully.' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logMainError('diagnostics', `Failed to export diagnostics: ${message}`);
+    return { success: false, message: `Failed to export diagnostics: ${message}` };
+  }
 }
 
 
@@ -1537,6 +1610,10 @@ ipcMain.handle('open-external', async (_event, url: string) => {
     }
     return false;
   }
+});
+
+ipcMain.handle('export-diagnostics', async () => {
+  return exportDiagnosticsBundle();
 });
 
 // Security & Account Management

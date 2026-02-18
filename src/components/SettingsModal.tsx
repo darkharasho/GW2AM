@@ -21,6 +21,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [gw2UpdateStatusText, setGw2UpdateStatusText] = useState('Idle');
     const [isRunningGw2Update, setIsRunningGw2Update] = useState(false);
     const [portalConfigStatus, setPortalConfigStatus] = useState<{ configured: boolean; message: string } | null>(null);
+    const [isExportingDiagnostics, setIsExportingDiagnostics] = useState(false);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -122,6 +123,23 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             showToast('Failed to auto-locate GW2 path.');
         } finally {
             setIsLocatingGw2Path(false);
+        }
+    };
+
+    const handleExportDiagnostics = async () => {
+        if (isExportingDiagnostics) return;
+        setIsExportingDiagnostics(true);
+        try {
+            const result = await window.api.exportDiagnostics();
+            if (!result.success) {
+                showToast(result.message || 'Failed to export diagnostics.');
+                return;
+            }
+            showToast(result.path ? `Diagnostics exported: ${result.path}` : 'Diagnostics exported.');
+        } catch {
+            showToast('Failed to export diagnostics.');
+        } finally {
+            setIsExportingDiagnostics(false);
         }
     };
 
@@ -279,6 +297,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                             </div>
                         </div>
                     )}
+
+                    <div>
+                        <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Diagnostics</label>
+                        <button
+                            type="button"
+                            onClick={() => { void handleExportDiagnostics(); }}
+                            disabled={isExportingDiagnostics}
+                            className="w-full px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] disabled:opacity-60 disabled:cursor-not-allowed text-[var(--theme-text)] transition-colors text-sm"
+                        >
+                            {isExportingDiagnostics ? 'Exporting Diagnostics...' : 'Export Diagnostics'}
+                        </button>
+                        <p className="text-xs text-[var(--theme-text-dim)] mt-1">
+                            Creates a support file with runtime info and recent logs, then opens its location.
+                        </p>
+                    </div>
 
                     <div>
                         <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Community</label>

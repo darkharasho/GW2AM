@@ -43,6 +43,7 @@ interface Api {
     shouldShowWhatsNew: () => Promise<{ version: string; shouldShow: boolean }>;
     setLastSeenVersion: (version: string) => Promise<boolean>;
     openExternal: (url: string) => Promise<boolean>;
+    exportDiagnostics: () => Promise<{ success: boolean; path?: string; message: string }>;
     onUpdateMessage: (callback: (value: string) => void) => () => void;
     onUpdateAvailable: (callback: (value: unknown) => void) => () => void;
     onUpdateNotAvailable: (callback: (value: unknown) => void) => () => void;
