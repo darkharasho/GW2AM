@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import type { AutomationDeps } from './windows.js';
 
-export const LINUX_AUTOMATION_SCRIPT_VERSION = 'linux-autologin-v2';
+export const LINUX_AUTOMATION_SCRIPT_VERSION = 'linux-autologin-v3';
 
 export function startLinuxCredentialAutomation(
   accountId: string,
@@ -27,21 +27,22 @@ log_automation() {
 }
 
 log_automation "script-start pid=$GW2_PID version=${LINUX_AUTOMATION_SCRIPT_VERSION}"
-credential_attempt_count=0
-max_credential_attempts=2
-credential_delay_after_window_detect_ms=1200
+
+credential_delay_after_window_detect_ms=700
 window_detected_ms=0
-last_credential_wait_log_ms=0
 credentials_submitted_ms=0
 play_click_not_before_ms=0
 play_attempt_count=0
 max_play_attempts=1
 last_play_attempt_ms=0
 seen_window=0
-post_login_geometry_logged=0
+hardened_attempted=0
+credential_submitted=0
 tab_profiles="14 1 6 2"
-tab_profile_index=0
-email_tab_count=14
+
+release_modifiers() {
+  xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R 2>/dev/null || true
+}
 
 is_blocking_prompt_visible() {
   if [ "\${GW2_BYPASS_PORTAL_PROMPT:-0}" = "1" ]; then
@@ -76,33 +77,33 @@ find_launcher_window() {
   echo "$id"
 }
 
-clear_focused_input() {
-  xdotool key --clearmodifiers --window "$win_id" ctrl+a
-  sleep 0.05
-  xdotool key --clearmodifiers --window "$win_id" Delete
-  sleep 0.07
+activate_launcher_window() {
+  xdotool windowraise "$win_id" 2>/dev/null || true
+  xdotool windowactivate --sync "$win_id" 2>/dev/null || return 1
+  xdotool windowfocus --sync "$win_id" 2>/dev/null || true
+  local active_id
+  active_id="$(xdotool getactivewindow 2>/dev/null || true)"
+  [ "$active_id" = "$win_id" ]
 }
 
-get_profile_tab_count() {
-  local idx="$1"
-  local current=0
-  for value in $tab_profiles; do
-    if [ "$current" -eq "$idx" ]; then
-      echo "$value"
-      return
-    fi
-    current=$((current + 1))
-  done
-  echo "14"
-}
-
-advance_tab_profile() {
-  tab_profile_index=$((tab_profile_index + 1))
-  if [ "$tab_profile_index" -ge 4 ]; then
-    tab_profile_index=0
+get_window_geometry() {
+  eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
+  if [ -z "$WIDTH" ] || [ -z "$HEIGHT" ]; then
+    return 1
   fi
-  email_tab_count="$(get_profile_tab_count "$tab_profile_index")"
-  log_automation "tab-profile-advanced index=$tab_profile_index tabs=$email_tab_count"
+  if [ "$WIDTH" -lt 120 ] || [ "$HEIGHT" -lt 120 ]; then
+    return 1
+  fi
+  return 0
+}
+
+click_client_point() {
+  local x="$1"
+  local y="$2"
+  xdotool mousemove --window "$win_id" "$x" "$y" 2>/dev/null || return 1
+  xdotool click --window "$win_id" 1 2>/dev/null || xdotool click 1 2>/dev/null || return 1
+  sleep 0.07
+  return 0
 }
 
 send_tab_count() {
@@ -111,61 +112,63 @@ send_tab_count() {
     return 0
   fi
   for _ in $(seq 1 "$count"); do
-    xdotool key --clearmodifiers --window "$win_id" Tab
+    xdotool key --clearmodifiers --window "$win_id" Tab || return 1
   done
-}
-
-focus_email_anchor() {
-  local tabs="$1"
-  eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
-  local cx cy
-  cx=$((WIDTH - 24))
-  cy=$((HEIGHT / 2))
-  if [ "$cx" -lt 20 ]; then cx=20; fi
-  if [ "$cy" -lt 20 ]; then cy=20; fi
-  xdotool mousemove --window "$win_id" "$cx" "$cy" click 1 2>/dev/null || true
-  sleep 0.05
-  send_tab_count "$tabs"
-  sleep 0.06
-  log_automation "email-anchor tabs=$tabs"
   return 0
 }
 
-submit_credentials_once() {
-  local tabs="$1"
-  focus_email_anchor "$tabs" || return 1
-  clear_focused_input
-  xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_EMAIL"
-  sleep 0.08
-  xdotool key --clearmodifiers --window "$win_id" Tab
+type_into_focused() {
+  local value="$1"
+  xdotool key --clearmodifiers --window "$win_id" ctrl+a || return 1
+  sleep 0.04
+  xdotool key --clearmodifiers --window "$win_id" Delete || return 1
   sleep 0.06
-  log_automation "password-anchor tabs=$tabs"
-  clear_focused_input
-  xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_PASSWORD"
-  sleep 0.10
-  xdotool key --clearmodifiers --window "$win_id" Return
-  log_automation "credentials-submitted tabs=$tabs"
+  xdotool type --clearmodifiers --window "$win_id" --delay 1 "$value" || return 1
+  return 0
+}
+
+submit_hardened_once() {
+  local tabs="$1"
+  release_modifiers
+  activate_launcher_window || return 1
+  get_window_geometry || return 1
+
+  local cx cy
+  cx=$((WIDTH * 4 / 5))
+  cy=$((HEIGHT / 2))
+  if [ "$cx" -lt 20 ]; then cx=20; fi
+  if [ "$cy" -lt 20 ]; then cy=20; fi
+
+  click_client_point "$cx" "$cy" || return 1
+  send_tab_count "$tabs" || return 1
+  sleep 0.06
+  type_into_focused "$GW2_EMAIL" || return 1
+  sleep 0.07
+  xdotool key --clearmodifiers --window "$win_id" Tab || return 1
+  sleep 0.06
+  type_into_focused "$GW2_PASSWORD" || return 1
+  sleep 0.08
+  xdotool key --clearmodifiers --window "$win_id" Return || return 1
+  log_automation "hardened-path-submit tabs=$tabs"
   return 0
 }
 
 click_play_button() {
   local attempt="$1"
+  get_window_geometry || return 1
   local cx cy
-  eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)" || return 1
-  if [ -n "$HEIGHT" ] && [ "$HEIGHT" -gt 150 ] 2>/dev/null && [ -n "$WIDTH" ] && [ "$WIDTH" -gt 250 ] 2>/dev/null; then
-    cx=$((WIDTH - 250))
-    cy=$((HEIGHT - 250))
-    xdotool mousemove --window "$win_id" "$cx" "$cy" click 1
-    log_automation "play-click fixed-offset-v2 x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT"
-    sleep 0.08
-    return 0
-  fi
-  log_automation "play-click broken (geometry invalid) win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
-  return 1
+  cx=$((WIDTH - 250))
+  cy=$((HEIGHT - 250))
+  if [ "$cx" -lt 20 ]; then cx=20; fi
+  if [ "$cy" -lt 20 ]; then cy=20; fi
+  xdotool mousemove --window "$win_id" "$cx" "$cy" click 1 2>/dev/null || true
+  log_automation "play-click fixed-offset-v3 x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
+  sleep 0.08
+  return 0
 }
 
-for i in $(seq 1 180); do
-  sleep 0.4
+for i in $(seq 1 220); do
+  sleep 0.25
 
   if is_blocking_prompt_visible; then
     log_automation "waiting-for-blocking-prompt"
@@ -178,72 +181,55 @@ for i in $(seq 1 180); do
     continue
   fi
 
+  now_epoch_ms="$(date +%s%3N)"
   if [ "$seen_window" -eq 0 ]; then
+    seen_window=1
+    window_detected_ms="$now_epoch_ms"
     log_automation "window-detected id=$win_id"
-    if eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)"; then
+    if get_window_geometry; then
       log_automation "window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
     fi
-    seen_window=1
-    window_detected_ms="$(date +%s%3N)"
     log_automation "credentials-delay-start wait_ms=$credential_delay_after_window_detect_ms"
   fi
-  now_epoch_ms="$(date +%s%3N)"
 
-  xdotool windowraise "$win_id" 2>/dev/null || true
-  xdotool windowactivate --sync "$win_id"
-  xdotool windowfocus --sync "$win_id" 2>/dev/null || true
-  active_id="$(xdotool getactivewindow 2>/dev/null || true)"
-  if [ "$active_id" != "$win_id" ]; then
+  if ! activate_launcher_window; then
     continue
   fi
 
-  if [ "$credential_attempt_count" -lt "$max_credential_attempts" ]; then
-    if [ "$window_detected_ms" -eq 0 ]; then
-      continue
-    fi
-    credentials_wait_elapsed_ms=$((now_epoch_ms - window_detected_ms))
-    if [ "$credentials_wait_elapsed_ms" -lt "$credential_delay_after_window_detect_ms" ]; then
-      if [ $((now_epoch_ms - last_credential_wait_log_ms)) -ge 2000 ]; then
-        log_automation "waiting-before-credentials elapsed_ms=$credentials_wait_elapsed_ms target_ms=$credential_delay_after_window_detect_ms"
-        last_credential_wait_log_ms="$now_epoch_ms"
-      fi
+  if [ "$credential_submitted" -eq 0 ]; then
+    elapsed_ms=$((now_epoch_ms - window_detected_ms))
+    if [ "$elapsed_ms" -lt "$credential_delay_after_window_detect_ms" ]; then
       continue
     fi
 
-    email_tab_count="$(get_profile_tab_count "$tab_profile_index")"
-    if ! submit_credentials_once "$email_tab_count"; then
-      credential_attempt_count=$((credential_attempt_count + 1))
-      if [ "$credential_attempt_count" -lt "$max_credential_attempts" ]; then
-        log_automation "credentials-retry reason=submit-failed attempt=$credential_attempt_count"
-        advance_tab_profile
-        continue
+    if [ "$hardened_attempted" -eq 0 ]; then
+      hardened_attempted=1
+      for tabs in $tab_profiles; do
+        if submit_hardened_once "$tabs"; then
+          credential_submitted=1
+          credentials_submitted_ms="$(date +%s%3N)"
+          play_click_not_before_ms=$((credentials_submitted_ms + 1200))
+          log_automation "credentials-submitted mode=hardened-path tabs=$tabs"
+          break
+        fi
+        log_automation "hardened-path-profile-failed tabs=$tabs"
+      done
+      if [ "$credential_submitted" -eq 0 ]; then
+        log_automation "credentials-aborted reason=hardened-path-failed"
+        exit 1
       fi
-      log_automation "credentials-aborted reason=submit-failed attempts=$credential_attempt_count"
-      exit 1
+      continue
     fi
-
-    sleep 1.8
-    credential_attempt_count=$((credential_attempt_count + 1))
-    credentials_submitted_ms="$(date +%s%3N)"
-    play_click_not_before_ms=$((credentials_submitted_ms + 1200))
-    continue
   fi
 
-  if [ "$credential_attempt_count" -eq 0 ]; then
+  if [ "$credential_submitted" -eq 0 ]; then
     continue
   fi
   if [ "$now_epoch_ms" -lt "$play_click_not_before_ms" ]; then
     continue
   fi
-  if [ $((now_epoch_ms - last_play_attempt_ms)) -lt 4000 ]; then
+  if [ $((now_epoch_ms - last_play_attempt_ms)) -lt 3000 ]; then
     continue
-  fi
-
-  if [ "$post_login_geometry_logged" -eq 0 ]; then
-    if eval "$(xdotool getwindowgeometry --shell "$win_id" 2>/dev/null)"; then
-      log_automation "post-login window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
-    fi
-    post_login_geometry_logged=1
   fi
 
   click_play_button "$play_attempt_count" || true
@@ -257,6 +243,7 @@ for i in $(seq 1 180); do
 done
 
 log_automation "script-finished timeout waiting for launcher interaction"
+exit 1
 `;
 
   const automationProcess = spawn(
