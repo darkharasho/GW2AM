@@ -34,6 +34,39 @@ if (fs.existsSync(outputDir)) {
   fs.rmSync(outputDir, { recursive: true, force: true });
 }
 
-const args = ['electron-builder', '--linux', '--win', '--publish', 'never'];
-const result = spawnSync('npx', args, { stdio: 'inherit', env: process.env });
+const buildAll = process.env.GW2AM_BUILD_ALL === '1';
+const platformArgs = buildAll
+  ? ['--linux', '--win']
+  : process.platform === 'win32'
+    ? ['--win']
+    : process.platform === 'linux'
+      ? ['--linux']
+      : ['--win'];
+const args = ['electron-builder', ...platformArgs, '--publish', 'never'];
+const runEnv = { ...process.env };
+if (
+  process.platform === 'win32' &&
+  !runEnv.CSC_LINK &&
+  !runEnv.WIN_CSC_LINK &&
+  !runEnv.CSC_NAME &&
+  !runEnv.WIN_CSC_NAME &&
+  !runEnv.CSC_IDENTITY_AUTO_DISCOVERY
+) {
+  // Keep local Windows builds unsigned without trying cert auto-discovery/signing helpers.
+  runEnv.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
+}
+const isWin = process.platform === 'win32';
+const result = isWin
+  ? spawnSync('cmd.exe', ['/d', '/s', '/c', `npx ${args.join(' ')}`], { stdio: 'inherit', env: runEnv })
+  : spawnSync('npx', args, { stdio: 'inherit', env: runEnv });
+
+if (result.error) {
+  console.error(`[run-electron-builder] failed to start: ${result.error.message}`);
+  process.exit(1);
+}
+
+if ((result.status ?? 1) !== 0) {
+  console.error(`[run-electron-builder] electron-builder failed with exit code ${result.status ?? 1}`);
+}
+
 process.exit(result.status ?? 1);

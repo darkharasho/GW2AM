@@ -107,5 +107,8 @@ try {
   if (releaseRepo) releaseArgs.push('--release-repo', releaseRepo);
   run(process.execPath, releaseArgs);
 } catch (error) {
+  if (error?.message) {
+    console.error(error.message);
+  }
   process.exit(error?.exitCode ?? 1);
 }
