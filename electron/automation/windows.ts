@@ -101,6 +101,27 @@ public static class GW2AMInput {
   public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
+  public static uint SendKeyUp(ushort vk) {
+    INPUT[] inputs = new INPUT[1];
+    inputs[0].type = 1u;
+    inputs[0].U.ki.wVk = vk;
+    inputs[0].U.ki.wScan = 0;
+    inputs[0].U.ki.dwFlags = 0x0002u;
+    return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+  }
+  public static uint ReleaseStandardModifiers() {
+    uint sent = 0u;
+    sent += SendKeyUp(0x10); // SHIFT
+    sent += SendKeyUp(0xA0); // LSHIFT
+    sent += SendKeyUp(0xA1); // RSHIFT
+    sent += SendKeyUp(0x11); // CONTROL
+    sent += SendKeyUp(0xA2); // LCONTROL
+    sent += SendKeyUp(0xA3); // RCONTROL
+    sent += SendKeyUp(0x12); // ALT
+    sent += SendKeyUp(0xA4); // LALT
+    sent += SendKeyUp(0xA5); // RALT
+    return sent;
+  }
   public static IntPtr MakeLParam(int x, int y) {
     int packed = (y << 16) | (x & 0xFFFF);
     return (IntPtr)packed;
@@ -415,8 +436,14 @@ function Test-LooksLikeEmailField([string]$probeText, [string]$emailText) {
 
 function Wait-ForModifierRelease([int]$timeoutMs = 5000) {
   $startedAt = Get-Date
+  $releasedOnce = $false
   while ($true) {
     try {
+      if (-not $releasedOnce) {
+        [void][GW2AMInput]::ReleaseStandardModifiers()
+        $releasedOnce = $true
+        Start-Sleep -Milliseconds 30
+      }
       $mods = [System.Windows.Forms.Control]::ModifierKeys
       $hasShift = (($mods -band [System.Windows.Forms.Keys]::Shift) -ne 0)
       $hasControl = (($mods -band [System.Windows.Forms.Keys]::Control) -ne 0)
@@ -429,7 +456,8 @@ function Wait-ForModifierRelease([int]$timeoutMs = 5000) {
     }
     if (((Get-Date) - $startedAt).TotalMilliseconds -gt $timeoutMs) {
       Log-Automation "modifier-release-timeout timeoutMs=$timeoutMs"
-      return $false
+      [void][GW2AMInput]::ReleaseStandardModifiers()
+      return $true
     }
     Start-Sleep -Milliseconds 90
   }
@@ -469,6 +497,7 @@ function Focus-ByTabCount([int]$preferredPid, [int]$tabCount) {
   if (-not (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles)) {
     return $false
   }
+  [void][GW2AMInput]::ReleaseStandardModifiers()
   $clicked = Click-LauncherBackground -preferredPid $preferredPid
   if (-not $clicked) {
     Log-Automation "background-click-fallback tabs=$tabCount"
@@ -495,6 +524,16 @@ function Focus-PasswordFromEmailAnchor([int]$preferredPid, [int]$emailTabs, [str
   return $true
 }
 
+function Test-EmailAlreadyPresent([string]$emailText) {
+  $probe = Read-FocusedInputText
+  if ([string]::IsNullOrEmpty($probe) -or $probe -eq '__GW2AM_NO_COPY__') {
+    return $false
+  }
+  $normalizedProbe = $probe.Trim().ToLowerInvariant()
+  $normalizedExpected = $emailText.Trim().ToLowerInvariant()
+  return -not [string]::IsNullOrWhiteSpace($normalizedExpected) -and $normalizedProbe -eq $normalizedExpected
+}
+
 function Type-IntoWindowViaPostMessage([int]$preferredPid, [string]$text) {
   if ([string]::IsNullOrEmpty($text)) {
     return $false
@@ -508,6 +547,13 @@ function Type-IntoWindowViaPostMessage([int]$preferredPid, [string]$text) {
   }
   Start-Sleep -Milliseconds 140
   return $true
+}
+
+function Test-ExactEmailMatch([string]$probeText, [string]$emailText) {
+  if ([string]::IsNullOrWhiteSpace($probeText) -or [string]::IsNullOrWhiteSpace($emailText)) {
+    return $false
+  }
+  return $probeText.Trim().ToLowerInvariant() -eq $emailText.Trim().ToLowerInvariant()
 }
 
 function Try-FocusPasswordViaUIA([int]$preferredPid) {
@@ -612,20 +658,44 @@ for ($i = 0; $i -lt 180; $i++) {
         }
 
         Start-Sleep -Milliseconds 220
-        Clear-FocusedInput
-        $emailSet = (Type-IntoFocusedInput $emailValue)
-        if (-not $emailSet) {
-          $emailSet = (Paste-IntoFocusedInput $emailValue)
-        }
-        if (-not $emailSet) {
-          $emailSet = (Type-IntoWindowViaPostMessage -preferredPid $pidValue -text $emailValue)
+        $emailAlreadyPresent = Test-EmailAlreadyPresent -emailText $emailValue
+        if ($emailAlreadyPresent) {
+          Log-Automation "email-prefilled-detected loop=$i"
+          $emailSet = $true
+        } else {
+          Clear-FocusedInput
+          [void][GW2AMInput]::ReleaseStandardModifiers()
+          $emailSet = (Type-IntoFocusedInput $emailValue)
+          if (-not $emailSet) {
+            $emailSet = (Paste-IntoFocusedInput $emailValue)
+          }
         }
         if (-not $emailSet) {
           Log-Automation "email-entry-failed loop=$i"
           Advance-TabProfile
           continue
         }
+
+        # Only submit when we can confirm the focused field contains the target email.
+        $emailVerified = $false
+        $emailProbe = Read-FocusedInputText
+        if ($emailProbe -eq '__GW2AM_NO_COPY__') {
+          # Non-copyable controls exist in some launcher states; allow a cautious submit path.
+          $emailVerified = $true
+          Log-Automation "email-verify-skipped reason=noncopyable loop=$i"
+        } else {
+          $emailVerified = Test-ExactEmailMatch -probeText $emailProbe -emailText $emailValue
+          Log-Automation "email-verify loop=$i probeLen=$($emailProbe.Length) verified=$emailVerified looksEmail=$(Test-LooksLikeEmailField -probeText $emailProbe -emailText $emailValue)"
+        }
+        if (-not $emailVerified) {
+          Log-Automation "email-verify-failed loop=$i"
+          Advance-TabProfile
+          Start-Sleep -Milliseconds 150
+          continue
+        }
+
         Start-Sleep -Milliseconds 60
+        [void][GW2AMInput]::ReleaseStandardModifiers()
         Press-EnterKey -preferredPid $pidValue
         $emailSubmitted = $true
         $passwordSubmitAttempted = $false
@@ -663,6 +733,7 @@ for ($i = 0; $i -lt 180; $i++) {
         $passwordSet = $false
         if ($passwordFocusLocked) {
           Clear-FocusedInput
+          [void][GW2AMInput]::ReleaseStandardModifiers()
           $passwordSet = Type-IntoFocusedInput $passwordValue
           if (-not $passwordSet) {
             $passwordSet = Paste-IntoFocusedInput $passwordValue
@@ -691,6 +762,7 @@ for ($i = 0; $i -lt 180; $i++) {
           continue
         }
         Start-Sleep -Milliseconds 120
+        [void][GW2AMInput]::ReleaseStandardModifiers()
         Press-EnterKey -preferredPid $pidValue
         $passwordSubmitted = $true
         $credentialAttemptCount++
