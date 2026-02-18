@@ -1,16 +1,16 @@
 # Release Notes
 
-Version v0.3.6 — February 18, 2026
+Version v0.3.7 — February 18, 2026
 
 ## 🌟 Highlights
-- Windows build improvements (pt1).
+- Launcher autofill streamlined and Ctrl+C shutdown normalized.
+- Unsigned Windows test builds are supported for local testing.
 
 ## 🛠️ Improvements
-- None.
+None.
 
 ## 🧯 Fixes
-- Master Password settings now persist across daily/weekly/monthly modes.
-- Windows launcher autofill is streamlined and Ctrl+C shutdown behavior is normalized.
+- Master password settings now persist for daily, weekly, and monthly modes.
 
 ## ⚠️ Breaking Changes
-- None.
+- Windows signing has been removed; installers are unsigned and may be blocked by Windows security prompts.
