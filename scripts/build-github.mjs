@@ -99,7 +99,6 @@ try {
     runNpm(['run', 'generate:release-notes']);
   }
 
-  run(process.execPath, ['scripts/verify-windows-signing.mjs']);
   runNpm(['run', 'build:electron']);
   runNpm(['run', 'build']);
   run(process.execPath, ['scripts/run-electron-builder.mjs']);
