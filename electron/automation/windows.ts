@@ -26,7 +26,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v11';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v20';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -51,13 +51,23 @@ export function startWindowsCredentialAutomation(
   pid: number,
   email: string,
   password: string,
-  _playClickXPercent?: number,
-  _playClickYPercent?: number,
+  playClickXPercent?: number,
+  playClickYPercent?: number,
   deps?: AutomationDeps,
 ): void {
   if (!deps) return;
   if (process.platform !== 'win32') return;
-  deps.logMain('automation', `Windows automation start account=${accountId} pid=${pid} emailLen=${email.length} script=${WINDOWS_AUTOMATION_SCRIPT_VERSION}`);
+  const normalizedPlayClickXPercent = Number.isFinite(playClickXPercent)
+    ? Math.max(0, Math.min(1, Number(playClickXPercent)))
+    : undefined;
+  const normalizedPlayClickYPercent = Number.isFinite(playClickYPercent)
+    ? Math.max(0, Math.min(1, Number(playClickYPercent)))
+    : undefined;
+  const hasCustomPlayClick = typeof normalizedPlayClickXPercent === 'number' && typeof normalizedPlayClickYPercent === 'number';
+  deps.logMain(
+    'automation',
+    `Windows automation start account=${accountId} pid=${pid} emailLen=${email.length} script=${WINDOWS_AUTOMATION_SCRIPT_VERSION} customPlayClick=${hasCustomPlayClick ? `${normalizedPlayClickXPercent},${normalizedPlayClickYPercent}` : 'none'}`,
+  );
 
   const automationScript = `
 $ProgressPreference = 'SilentlyContinue'
@@ -67,28 +77,44 @@ $emailValue = $env:GW2_EMAIL
 $passwordValue = $env:GW2_PASSWORD
 $windowTitles = @('Guild Wars 2', 'Guild Wars2', 'ArenaNet')
 $credentialAttemptCount = 0
-$maxCredentialAttempts = 2
-$emailSubmitted = $false
-$passwordSubmitted = $false
-$passwordSubmitAttempted = $false
-$passwordFocusLocked = $false
+$maxCredentialAttempts = 10
+$credentialsSubmitted = $false
 $emailTabCount = -1
-$tabProfiles = @(1, 2, 6, 14)
+$tabProfiles = @(14, 6, 2, 1)
 $tabProfileIndex = 0
-$hardenedPathAttempted = $false
-$emailSubmittedAt = [DateTime]::MinValue
-$lastStageAdvanceAt = [DateTime]::MinValue
 $resolvedWindowHandle = [IntPtr]::Zero
 $credentialsSubmittedAt = [DateTime]::MinValue
+$lastCredentialAttemptAt = [DateTime]::MinValue
 $playAttemptCount = 0
-$maxPlayAttempts = 3
-$playAttemptIntervalMs = 4000
+$maxPlayAttempts = 60
+$playAttemptIntervalMs = 1000
 $lastPlayAttemptAt = [DateTime]::MinValue
+$activationThrottleMs = 1200
+$lastActivationAt = [DateTime]::MinValue
+$playXPercent = [double]::NaN
+$playYPercent = [double]::NaN
+$parsedPercent = 0.0
+if ([double]::TryParse($env:GW2_PLAY_X_PERCENT, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsedPercent)) {
+  if ($parsedPercent -ge 0.0 -and $parsedPercent -le 1.0) {
+    $playXPercent = $parsedPercent
+  }
+}
+$parsedPercent = 0.0
+if ([double]::TryParse($env:GW2_PLAY_Y_PERCENT, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsedPercent)) {
+  if ($parsedPercent -ge 0.0 -and $parsedPercent -le 1.0) {
+    $playYPercent = $parsedPercent
+  }
+}
+$hasCustomPlayCoordinate = (-not [double]::IsNaN($playXPercent)) -and (-not [double]::IsNaN($playYPercent))
 
 function Log-Automation([string]$message) {
   [Console]::Out.WriteLine("[gw2am-automation] $message")
 }
 Log-Automation "script-start pid=$pidValue version=${WINDOWS_AUTOMATION_SCRIPT_VERSION}"
+Log-Automation "mode=deterministic-launcher-flow"
+if ($hasCustomPlayCoordinate) {
+  Log-Automation "play-coordinate custom x=$playXPercent y=$playYPercent"
+}
 try {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
@@ -143,6 +169,8 @@ public static class GW2AMInput {
   public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
   public static uint SendKeyUp(ushort vk) {
     INPUT[] inputs = new INPUT[1];
     inputs[0].type = 1u;
@@ -209,20 +237,6 @@ public static class GW2AMInput {
 }
 "@
 
-function Focus-GW2Window([int]$preferredPid, [string[]]$titles) {
-  if ($preferredPid -gt 0 -and $wshell.AppActivate($preferredPid)) {
-    Start-Sleep -Milliseconds 120
-    return $true
-  }
-  foreach ($title in $titles) {
-    if ($wshell.AppActivate($title)) {
-      Start-Sleep -Milliseconds 120
-      return $true
-    }
-  }
-  return $false
-}
-
 function Is-UsableWindowHandle([IntPtr]$handle) {
   if ($handle -eq [IntPtr]::Zero) {
     return $false
@@ -257,6 +271,39 @@ function Find-LauncherHandleByTitle([string[]]$titles) {
   return [IntPtr]::Zero
 }
 
+function Focus-GW2Window([int]$preferredPid, [string[]]$titles, [bool]$force = $false) {
+  $handle = Get-MainWindowHandle -preferredPid $preferredPid
+  if ($handle -ne [IntPtr]::Zero) {
+    $foreground = [GW2AMInput]::GetForegroundWindow()
+    if ($foreground -eq $handle) {
+      return $true
+    }
+  }
+
+  if (-not $force) {
+    $now = Get-Date
+    if ($lastActivationAt -ne [DateTime]::MinValue -and (($now - $lastActivationAt).TotalMilliseconds -lt $activationThrottleMs)) {
+      return $false
+    }
+  }
+
+  if ($preferredPid -gt 0 -and $wshell.AppActivate($preferredPid)) {
+    $script:resolvedWindowHandle = [IntPtr]::Zero
+    $script:lastActivationAt = Get-Date
+    Start-Sleep -Milliseconds 90
+    return $true
+  }
+  foreach ($title in $titles) {
+    if ($wshell.AppActivate($title)) {
+      $script:resolvedWindowHandle = [IntPtr]::Zero
+      $script:lastActivationAt = Get-Date
+      Start-Sleep -Milliseconds 90
+      return $true
+    }
+  }
+  return $false
+}
+
 function Get-MainWindowHandle([int]$preferredPid) {
   if (Is-UsableWindowHandle $resolvedWindowHandle) {
     return $resolvedWindowHandle
@@ -287,11 +334,36 @@ function Get-MainWindowHandle([int]$preferredPid) {
 
   $foregroundHandle = [GW2AMInput]::GetForegroundWindow()
   if (Is-UsableWindowHandle $foregroundHandle) {
-    $script:resolvedWindowHandle = $foregroundHandle
+    # Do not cache foreground fallback; it may be another app while launcher initializes.
     return $foregroundHandle
   }
 
   return [IntPtr]::Zero
+}
+
+function Get-WindowClassName([IntPtr]$handle) {
+  if ($handle -eq [IntPtr]::Zero) {
+    return ''
+  }
+  try {
+    $capacity = 256
+    $sb = New-Object System.Text.StringBuilder $capacity
+    $len = [GW2AMInput]::GetClassName($handle, $sb, $capacity)
+    if ($len -le 0) {
+      return ''
+    }
+    return $sb.ToString()
+  } catch {
+    return ''
+  }
+}
+
+function Is-LauncherWindowHandle([IntPtr]$handle) {
+  $className = Get-WindowClassName -handle $handle
+  if ([string]::IsNullOrWhiteSpace($className)) {
+    return $false
+  }
+  return $className.Equals('ArenaNet', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Is-LikelyFullscreenWindow([IntPtr]$hWnd) {
@@ -454,8 +526,8 @@ function Send-TabCountToWindow([int]$preferredPid, [int]$count) {
   $lParamBase = [int64](($scanCode -shl 16) -bor 1)
   for ($i = 0; $i -lt $count; $i++) {
     [void][GW2AMInput]::SendMessage($h, 0x0100, [IntPtr]0x09, [IntPtr]$lParamBase) # WM_KEYDOWN Tab
+    [void][GW2AMInput]::SendMessage($h, 0x0101, [IntPtr]0x09, [IntPtr]($lParamBase -bor 0xC0000000)) # WM_KEYUP Tab
   }
-  [void][GW2AMInput]::SendMessage($h, 0x0101, [IntPtr]0x09, [IntPtr]($lParamBase -bor 0xC0000000)) # WM_KEYUP Tab
   Start-Sleep -Milliseconds 110
   return $true
 }
@@ -955,231 +1027,205 @@ function Try-LoginViaHardenedPath([int]$preferredPid, [string]$emailText, [strin
   }
 }
 
+function Verify-EmailFieldPassive([int]$preferredPid, [string]$emailText) {
+  $focusInfo = Get-FocusedElementInfo
+  if ($focusInfo.usable -and $focusInfo.isEdit -and -not $focusInfo.isPassword) {
+    if (Test-ExactEmailMatch -probeText $focusInfo.value -emailText $emailText) {
+      return $true
+    }
+    if ([string]::IsNullOrWhiteSpace($focusInfo.value)) {
+      Log-Automation "login-flow-verify-inconclusive mode=passive-empty-focused-edit"
+      return $true
+    }
+    Log-Automation "login-flow-verify-mismatch mode=passive-focused-edit"
+    return $false
+  }
+  Log-Automation "login-flow-verify-inconclusive mode=passive-no-focused-email"
+  return $true
+}
+
+function Click-PlayButtonLauncherFlow([int]$preferredPid) {
+  $h = Get-MainWindowHandle -preferredPid $preferredPid
+  if (-not (Is-LauncherWindowHandle -handle $h)) {
+    return $false
+  }
+  if ($hasCustomPlayCoordinate) {
+    if (Click-ClientPercent -preferredPid $preferredPid -xPercent $playXPercent -yPercent $playYPercent -tag 'play-custom') {
+      return $true
+    }
+  }
+  if (Click-ClientPercent -preferredPid $preferredPid -xPercent 0.738 -yPercent 0.725 -tag 'play-us') {
+    return $true
+  }
+  if (Click-ClientPercent -preferredPid $preferredPid -xPercent 0.905 -yPercent 0.766 -tag 'play-cn') {
+    return $true
+  }
+  return $false
+}
+
+function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText, [string]$passwordText) {
+  if (-not (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles -force $true)) {
+    Log-Automation "login-flow-focus-failed"
+    return $false
+  }
+  if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
+    Log-Automation "login-flow-modifier-timeout"
+    return $false
+  }
+
+  $emailTabs = Get-PreferredEmailTabCount
+  $anchor = Get-LauncherEmptyCoordinate -preferredPid $preferredPid
+  if (-not $anchor) {
+    Log-Automation "login-flow-no-empty-coordinate"
+    return $false
+  }
+
+  $handle = [IntPtr]$anchor.Handle
+  $x = [int]$anchor.X
+  $y = [int]$anchor.Y
+
+  $gwlStyle = -16
+  $wsDisabled = 0x08000000
+  $originalStyle = [GW2AMInput]::GetWindowLongPtr($handle, $gwlStyle)
+  $disabledStyle = [IntPtr]([int64]$originalStyle -bor $wsDisabled)
+  [void][GW2AMInput]::SetWindowLongPtr($handle, $gwlStyle, $disabledStyle)
+
+  try {
+    if (-not (Click-LauncherCoordinate -handle $handle -x $x -y $y)) {
+      return $false
+    }
+
+    if (-not (Send-TabCountToWindow -preferredPid $preferredPid -count $emailTabs)) {
+      for ($n = 0; $n -lt $emailTabs; $n++) {
+        Press-TabKey -preferredPid $preferredPid
+      }
+    }
+    Start-Sleep -Milliseconds 90
+
+    Clear-FocusedInput
+    [void][GW2AMInput]::ReleaseStandardModifiers()
+    $emailSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $emailText
+    if (-not $emailSet) {
+      $emailSet = Try-SetEmailViaUIA -preferredPid $preferredPid -emailText $emailText
+    }
+    if (-not $emailSet) {
+      $emailSet = Type-IntoFocusedInput $emailText
+      if (-not $emailSet) {
+        $emailSet = Paste-IntoFocusedInput $emailText
+      }
+    }
+    if (-not $emailSet) {
+      Log-Automation "login-flow-email-failed tabs=$emailTabs"
+      return $false
+    }
+
+    if (-not (Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x09)) {
+      Press-TabKey -preferredPid $preferredPid
+    }
+    Start-Sleep -Milliseconds 90
+
+    Clear-FocusedInput
+    [void][GW2AMInput]::ReleaseStandardModifiers()
+    $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $passwordText
+    if (-not $passwordSet) {
+      $passwordSet = Try-SetPasswordViaUIA -preferredPid $preferredPid -passwordText $passwordText
+    }
+    if (-not $passwordSet) {
+      $passwordSet = Type-IntoFocusedInput $passwordText
+      if (-not $passwordSet) {
+        $passwordSet = Paste-IntoFocusedInput $passwordText
+      }
+    }
+    if (-not $passwordSet) {
+      Log-Automation "login-flow-password-failed tabs=$emailTabs"
+      return $false
+    }
+
+    $emailVerified = Verify-EmailFieldPassive -preferredPid $preferredPid -emailText $emailText
+    if (-not $emailVerified) {
+      Log-Automation "login-flow-verify-failed tabs=$emailTabs"
+      return $false
+    }
+
+    [void][GW2AMInput]::ReleaseStandardModifiers()
+    $submitViaWindowMessage = Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x0D
+    $submitUsedGlobalFallback = $false
+    if (-not $submitViaWindowMessage) {
+      if (Focus-GW2Window -preferredPid $preferredPid -titles $windowTitles -force $true) {
+        Press-EnterKey -preferredPid $preferredPid
+        $submitUsedGlobalFallback = $true
+      }
+    }
+    $script:emailTabCount = $emailTabs
+    Log-Automation "login-flow-submitted tabs=$emailTabs enterWindowMessage=$submitViaWindowMessage enterGlobalFallback=$submitUsedGlobalFallback"
+    return $true
+  } finally {
+    [void][GW2AMInput]::SetWindowLongPtr($handle, $gwlStyle, $originalStyle)
+  }
+}
+
 for ($i = 0; $i -lt 180; $i++) {
   Start-Sleep -Milliseconds 400
-  $activated = Focus-GW2Window -preferredPid $pidValue -titles $windowTitles
+  $now = Get-Date
 
-  if ($activated) {
-    Log-Automation "window-activated loop=$i"
-    $now = Get-Date
-
-    if ($credentialAttemptCount -lt $maxCredentialAttempts) {
-      $activatedAfterWait = Focus-GW2Window -preferredPid $pidValue -titles $windowTitles
-      if (-not $activatedAfterWait) {
-        Log-Automation "activation-lost-before-credentials loop=$i"
-        continue
-      }
-
-      if (-not $emailSubmitted) {
-        if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
-          Log-Automation "email-stage-blocked-by-modifier loop=$i"
-          continue
-        }
-
-        if (-not $hardenedPathAttempted) {
-          $hardenedPathAttempted = $true
-          $hardenedPathOk = Try-LoginViaHardenedPath -preferredPid $pidValue -emailText $emailValue -passwordText $passwordValue -emailTabs 14
-          if ($hardenedPathOk) {
-            $emailSubmitted = $true
-            $passwordSubmitted = $true
-            $passwordSubmitAttempted = $true
-            $passwordFocusLocked = $true
-            $credentialAttemptCount++
-            $emailSubmittedAt = Get-Date
-            $credentialsSubmittedAt = Get-Date
-            Log-Automation "credentials-submitted attempt=$credentialAttemptCount mode=hardened-path"
-            continue
-          }
-          Log-Automation "hardened-path-failed loop=$i"
-          Log-Automation "credentials-aborted reason=hardened-path-failed"
-          break
-        }
-
-        $emailFastSetViaUia = Try-SetEmailViaUIA -preferredPid $pidValue -emailText $emailValue
-        if ($emailFastSetViaUia) {
-          Log-Automation "email-uia-fastset loop=$i"
-          Start-Sleep -Milliseconds 80
-          [void][GW2AMInput]::ReleaseStandardModifiers()
-          Press-EnterKey -preferredPid $pidValue
-          $emailSubmitted = $true
-          $passwordSubmitAttempted = $false
-          $passwordFocusLocked = $false
-          $emailSubmittedAt = Get-Date
-          Log-Automation "email-submitted loop=$i mode=uia"
-          continue
-        }
-
-        if (-not (Try-FocusEmailField -preferredPid $pidValue -emailText $emailValue)) {
-          Log-Automation "email-focus-failed loop=$i"
-          continue
-        }
-
-        Start-Sleep -Milliseconds 220
-        $emailAlreadyPresent = Test-EmailAlreadyPresent -emailText $emailValue
-        if ($emailAlreadyPresent) {
-          Log-Automation "email-prefilled-detected loop=$i"
-          $emailSet = $true
-        } else {
-          Clear-FocusedInput
-          [void][GW2AMInput]::ReleaseStandardModifiers()
-          $emailSet = (Type-IntoFocusedInput $emailValue)
-          if (-not $emailSet) {
-            $emailSet = (Paste-IntoFocusedInput $emailValue)
-          }
-        }
-        if (-not $emailSet) {
-          Log-Automation "email-entry-failed loop=$i"
-          Advance-TabProfile
-          continue
-        }
-
-        # Only submit when we can confirm the focused field contains the target email.
-        $emailVerified = $false
-        $emailProbe = Read-FocusedInputText
-        if ($emailProbe -eq '__GW2AM_NO_COPY__') {
-          $focusInfo = Get-FocusedElementInfo
-          Log-Automation "email-verify-noncopyable loop=$i isEdit=$($focusInfo.isEdit) isPassword=$($focusInfo.isPassword) name=$($focusInfo.name)"
-          if ($focusInfo.isEdit -and -not $focusInfo.isPassword) {
-            $uiaEmailVerified = Test-ExactEmailMatch -probeText $focusInfo.value -emailText $emailValue
-            if (-not $uiaEmailVerified) {
-              $uiaSetOk = Try-SetEmailViaUIA -preferredPid $pidValue -emailText $emailValue
-              if ($uiaSetOk) {
-                $emailVerified = $true
-                Log-Automation "email-verify-uia-set loop=$i"
-              } else {
-                $emailVerified = $true
-                Log-Automation "email-verify-accepted-noncopyable-edit loop=$i"
-              }
-            } else {
-              $emailVerified = $true
-              Log-Automation "email-verify-uia-match loop=$i"
-            }
-          } else {
-            $emailVerified = $false
-            Log-Automation "email-verify-failed reason=noncopyable-nonedit loop=$i"
-          }
-        } else {
-          $emailVerified = Test-ExactEmailMatch -probeText $emailProbe -emailText $emailValue
-          Log-Automation "email-verify loop=$i probeLen=$($emailProbe.Length) verified=$emailVerified looksEmail=$(Test-LooksLikeEmailField -probeText $emailProbe -emailText $emailValue)"
-        }
-        if (-not $emailVerified) {
-          Log-Automation "email-verify-failed loop=$i"
-          Advance-TabProfile
-          Start-Sleep -Milliseconds 150
-          continue
-        }
-
-        Start-Sleep -Milliseconds 60
-        [void][GW2AMInput]::ReleaseStandardModifiers()
-        Press-EnterKey -preferredPid $pidValue
-        $emailSubmitted = $true
-        $passwordSubmitAttempted = $false
-        $passwordFocusLocked = $false
-        $emailSubmittedAt = Get-Date
-        Log-Automation "email-submitted loop=$i"
-        continue
-      }
-
-      if (-not $passwordSubmitted) {
-        # Wait for launcher transition from email stage to password stage.
-        $elapsedMs = [int](($now - $emailSubmittedAt).TotalMilliseconds)
-        if ($elapsedMs -lt 650) {
-          Log-Automation "waiting-password-stage loop=$i elapsedMs=$([int](($now - $emailSubmittedAt).TotalMilliseconds))"
-          continue
-        }
-        if ($passwordSubmitAttempted) {
-          continue
-        }
-        $passwordSubmitAttempted = $true
-
-        if (-not (Wait-ForModifierRelease -timeoutMs 5000)) {
-          Log-Automation "password-stage-blocked-by-modifier loop=$i"
-          $passwordSubmitAttempted = $false
-          continue
-        }
-
-        $tabsForPassword = Get-PreferredEmailTabCount
-        $passwordFocusLocked = Focus-PasswordFromEmailAnchor -preferredPid $pidValue -emailTabs $tabsForPassword -emailText $emailValue -allowNonCopyableAnchor $true
-        if (-not $passwordFocusLocked) {
-          $passwordFocusLocked = Try-FocusPasswordViaUIA -preferredPid $pidValue
-        }
-        Log-Automation "password-focus-lock loop=$i locked=$passwordFocusLocked tabs=$tabsForPassword"
-
-        $passwordSet = $false
-        if ($passwordFocusLocked) {
-          Clear-FocusedInput
-          [void][GW2AMInput]::ReleaseStandardModifiers()
-          $passwordSet = Type-IntoFocusedInput $passwordValue
-          if (-not $passwordSet) {
-            $passwordSet = Paste-IntoFocusedInput $passwordValue
-          }
-        }
-        if (-not $passwordSet) {
-          $passwordSet = Try-SetPasswordViaUIA -preferredPid $pidValue -passwordText $passwordValue
-        }
-        if (-not $passwordSet) {
-          $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $pidValue -text $passwordValue
-        }
-        Log-Automation "password-write-attempt loop=$i success=$passwordSet"
-        if (-not $passwordSet) {
-          $credentialAttemptCount++
-          if ($credentialAttemptCount -ge $maxCredentialAttempts) {
-            Log-Automation "credentials-aborted reason=password-write-failed attempts=$credentialAttemptCount"
-            break
-          }
-          Log-Automation "credentials-retry reason=password-write-failed attempts=$credentialAttemptCount"
-          $emailSubmitted = $false
-          $passwordSubmitAttempted = $false
-          $passwordFocusLocked = $false
-          $emailSubmittedAt = [DateTime]::MinValue
-          Advance-TabProfile
-          Start-Sleep -Milliseconds 240
-          continue
-        }
-        Start-Sleep -Milliseconds 120
-        [void][GW2AMInput]::ReleaseStandardModifiers()
-        Press-EnterKey -preferredPid $pidValue
-        $passwordSubmitted = $true
-        $credentialAttemptCount++
-        $credentialsSubmittedAt = Get-Date
-        Log-Automation "credentials-submitted attempt=$credentialAttemptCount mode=anchored"
-        continue
-      }
-    }
-
-    # After credentials are submitted, login can take a few seconds before Play is available.
-    if ($credentialAttemptCount -eq 0) {
+  if (-not $credentialsSubmitted) {
+    if (($now - $lastCredentialAttemptAt).TotalMilliseconds -lt 900) {
       continue
     }
-    if (($now - $credentialsSubmittedAt).TotalMilliseconds -lt 4500) {
+    $lastCredentialAttemptAt = $now
+
+    $loginOk = Try-EnterCredentialsLauncherFlow -preferredPid $pidValue -emailText $emailValue -passwordText $passwordValue
+    if ($loginOk) {
+      $credentialsSubmitted = $true
+      $credentialAttemptCount++
+      $credentialsSubmittedAt = Get-Date
+      Log-Automation "credentials-submitted attempt=$credentialAttemptCount mode=launcher-flow"
       continue
     }
 
-    if (($now - $lastPlayAttemptAt).TotalMilliseconds -lt $playAttemptIntervalMs) {
-      continue
-    }
-
-    $playWindow = Get-MainWindowHandle -preferredPid $pidValue
-    if (Is-LikelyFullscreenWindow -hWnd $playWindow) {
-      Log-Automation "play-detected-fullscreen-before-attempt"
+    $credentialAttemptCount++
+    if ($credentialAttemptCount -ge $maxCredentialAttempts) {
+      Log-Automation "credentials-aborted reason=entry-failed attempts=$credentialAttemptCount"
       break
     }
+    Log-Automation "credentials-retry reason=entry-failed attempts=$credentialAttemptCount"
+    Advance-TabProfile
+    continue
+  }
 
-    Press-EnterKey -preferredPid $pidValue
-    $playAttemptCount++
-    $lastPlayAttemptAt = $now
-    Log-Automation "play-enter attempt=$playAttemptCount"
-    Start-Sleep -Milliseconds 350
-    $playWindowAfterEnter = Get-MainWindowHandle -preferredPid $pidValue
-    if (Is-LikelyFullscreenWindow -hWnd $playWindowAfterEnter) {
-      Log-Automation "play-detected-fullscreen-after-attempt"
-      break
-    }
+  if (($now - $credentialsSubmittedAt).TotalMilliseconds -lt 1200) {
+    continue
+  }
 
-    if ($playAttemptCount -ge $maxPlayAttempts) {
-      Log-Automation 'script-finished max-play-attempts reached'
-      break
-    }
+  if (($now - $lastPlayAttemptAt).TotalMilliseconds -lt $playAttemptIntervalMs) {
+    continue
+  }
+
+  $playWindow = Get-MainWindowHandle -preferredPid $pidValue
+  $playWindowClass = Get-WindowClassName -handle $playWindow
+  if (-not (Is-LauncherWindowHandle -handle $playWindow)) {
+    Log-Automation "play-loop-stopped reason=non-launcher-window class=$playWindowClass"
+    break
+  }
+  if (Is-LikelyFullscreenWindow -hWnd $playWindow) {
+    Log-Automation "play-detected-fullscreen-before-attempt"
+    break
+  }
+
+  $clickedPlay = Click-PlayButtonLauncherFlow -preferredPid $pidValue
+  $playAttemptCount++
+  $lastPlayAttemptAt = $now
+  Log-Automation "play-attempt attempt=$playAttemptCount clicked=$clickedPlay"
+  Start-Sleep -Milliseconds 350
+  $playWindowAfterEnter = Get-MainWindowHandle -preferredPid $pidValue
+  if (Is-LikelyFullscreenWindow -hWnd $playWindowAfterEnter) {
+    Log-Automation "play-detected-fullscreen-after-attempt"
+    break
+  }
+
+  if ($playAttemptCount -ge $maxPlayAttempts) {
+    Log-Automation 'script-finished max-play-attempts reached'
+    break
   }
 }
 Log-Automation "script-finished timeout-or-loop-end credentialAttempts=$credentialAttemptCount playAttempts=$playAttemptCount"
@@ -1204,6 +1250,8 @@ Log-Automation "script-finished timeout-or-loop-end credentialAttempts=$credenti
           GW2_PID: String(pid),
           GW2_EMAIL: email,
           GW2_PASSWORD: password,
+          GW2_PLAY_X_PERCENT: typeof normalizedPlayClickXPercent === 'number' ? String(normalizedPlayClickXPercent) : '',
+          GW2_PLAY_Y_PERCENT: typeof normalizedPlayClickYPercent === 'number' ? String(normalizedPlayClickYPercent) : '',
         },
       },
     );

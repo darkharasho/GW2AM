@@ -174,6 +174,18 @@ function resolveWindowsPowerShellPath(): string {
   return resolvedWindowsPowerShellPath;
 }
 
+function invalidateWindowsProcessSnapshot(): void {
+  windowsProcessSnapshotCache = { timestamp: 0, processes: [] };
+}
+
+function isWindowsPidRunning(pid: number): boolean {
+  if (process.platform !== 'win32') return false;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const command = `if (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }`;
+  const result = spawnSync(resolveWindowsPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8' });
+  return result.status === 0;
+}
+
 function readFileTail(filePath: string, maxBytes = 200 * 1024): string {
   if (!fs.existsSync(filePath)) return '';
   const stats = fs.statSync(filePath);
@@ -1046,7 +1058,16 @@ function terminatePid(pid: number): boolean {
   try {
     if (process.platform === 'win32') {
       const result = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf8' });
-      return result.status === 0;
+      if (result.status === 0) {
+        invalidateWindowsProcessSnapshot();
+        return true;
+      }
+      invalidateWindowsProcessSnapshot();
+      if (!isWindowsPidRunning(pid)) {
+        logMainWarn('stop', `taskkill returned status=${result.status ?? 'null'} but pid=${pid} is not running`);
+        return true;
+      }
+      return false;
     }
     process.kill(pid, 'SIGTERM');
     try {
@@ -1103,6 +1124,7 @@ function stopAccountProcess(accountId: string): boolean {
     for (const pid of targetPids) {
       if (terminatePidTree(pid)) stoppedAny = true;
     }
+    invalidateWindowsProcessSnapshot();
     const remaining = getAccountMumblePids(accountId);
     if (stoppedAny && remaining.length === 0) {
       launchStateMachine.setState(accountId, 'stopped', 'verified', `Killed account-bound PIDs: ${targetPids.join(', ')}`);
@@ -1110,6 +1132,7 @@ function stopAccountProcess(accountId: string): boolean {
     }
   }
 
+  invalidateWindowsProcessSnapshot();
   const running = getAllRunningGw2Pids();
   logMain('stop', `Account=${accountId} fallback running pids=${running.join(',')}`);
   if (running.length === 0) {
@@ -1119,6 +1142,12 @@ function stopAccountProcess(accountId: string): boolean {
   let stoppedAny = false;
   for (const pid of running) {
     if (terminatePidTree(pid)) stoppedAny = true;
+  }
+  invalidateWindowsProcessSnapshot();
+  const stillRunning = getAllRunningGw2Pids();
+  if (stillRunning.length === 0) {
+    launchStateMachine.setState(accountId, 'stopped', 'inferred', 'No running GW2 process found after stop attempts');
+    return true;
   }
   if (stoppedAny) {
     launchStateMachine.setState(accountId, 'stopped', 'verified', `Stopped via fallback PID kill (${running.join(', ')})`);
@@ -1180,6 +1209,8 @@ function startCredentialAutomation(
   email: string,
   password: string,
   bypassPortalPrompt = false,
+  playClickXPercent?: number,
+  playClickYPercent?: number,
 ): void {
   logMain('automation', `Dispatch account=${accountId} platform=${process.platform} pid=${pid}`);
   const deps = {
@@ -1189,7 +1220,7 @@ function startCredentialAutomation(
     trackAutomationProcess,
   };
   if (process.platform === 'win32') {
-    runWindowsCredentialAutomation(accountId, pid, email, password, undefined, undefined, deps);
+    runWindowsCredentialAutomation(accountId, pid, email, password, playClickXPercent, playClickYPercent, deps);
     return;
   }
   if (process.platform === 'linux') {
@@ -1936,10 +1967,13 @@ ipcMain.handle('launch-account', async (_, id) => {
     account.email,
     password,
     bypassLinuxPortalPrompt,
+    account.playClickXPercent,
+    account.playClickYPercent,
   );
   launchStateMachine.setState(id, 'credentials_submitted', 'inferred', 'Credential automation started');
 
-  const launched = await waitForAccountProcess(account.id, 25000);
+  const processWaitTimeoutMs = process.platform === 'win32' ? 90000 : 25000;
+  const launched = await waitForAccountProcess(account.id, processWaitTimeoutMs);
   if (!launched) {
     console.error(`GW2 did not appear as running for account ${account.nickname} within timeout.`);
     launchStateMachine.setState(id, 'errored', 'inferred', 'Process not detected before timeout');
