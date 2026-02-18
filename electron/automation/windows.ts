@@ -26,7 +26,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v20';
+export const WINDOWS_AUTOMATION_SCRIPT_VERSION = 'win-autologin-v21';
 export type AutomationDeps = {
   logMain: (scope: string, message: string) => void;
   logMainWarn: (scope: string, message: string) => void;
@@ -1102,48 +1102,64 @@ function Try-EnterCredentialsLauncherFlow([int]$preferredPid, [string]$emailText
     }
     Start-Sleep -Milliseconds 90
 
-    Clear-FocusedInput
-    [void][GW2AMInput]::ReleaseStandardModifiers()
-    $emailSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $emailText
-    if (-not $emailSet) {
-      $emailSet = Try-SetEmailViaUIA -preferredPid $preferredPid -emailText $emailText
+    $focusAfterEmailTabs = Get-FocusedElementInfo
+    $emailStageSkipped = $false
+    if ($focusAfterEmailTabs.usable -and $focusAfterEmailTabs.isEdit -and $focusAfterEmailTabs.isPassword) {
+      $emailStageSkipped = $true
+      Log-Automation "login-flow-email-skipped reason=password-field-focused tabs=$emailTabs"
     }
-    if (-not $emailSet) {
-      $emailSet = Type-IntoFocusedInput $emailText
+
+    if (-not $emailStageSkipped) {
+      [void][GW2AMInput]::ReleaseStandardModifiers()
+      $emailSet = Try-TypeIntoFocusedField -text $emailText
       if (-not $emailSet) {
-        $emailSet = Paste-IntoFocusedInput $emailText
+        $emailSet = Try-SetEmailViaUIA -preferredPid $preferredPid -emailText $emailText
+      }
+      if (-not $emailSet) {
+        $emailSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $emailText
+      }
+      if (-not $emailSet) {
+        Log-Automation "login-flow-email-failed tabs=$emailTabs"
+        return $false
       }
     }
-    if (-not $emailSet) {
-      Log-Automation "login-flow-email-failed tabs=$emailTabs"
-      return $false
+
+    if (-not $emailStageSkipped) {
+      if (-not (Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x09)) {
+        Press-TabKey -preferredPid $preferredPid
+      }
+      Start-Sleep -Milliseconds 90
     }
 
-    if (-not (Send-KeyToWindow -preferredPid $preferredPid -virtualKey 0x09)) {
-      Press-TabKey -preferredPid $preferredPid
+    $focusBeforePassword = Get-FocusedElementInfo
+    if (-not ($focusBeforePassword.usable -and $focusBeforePassword.isEdit -and $focusBeforePassword.isPassword)) {
+      [void](Try-FocusPasswordViaUIA -preferredPid $preferredPid)
     }
-    Start-Sleep -Milliseconds 90
 
-    Clear-FocusedInput
     [void][GW2AMInput]::ReleaseStandardModifiers()
-    $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $passwordText
+    $passwordSet = Try-TypeIntoFocusedField -text $passwordText
     if (-not $passwordSet) {
       $passwordSet = Try-SetPasswordViaUIA -preferredPid $preferredPid -passwordText $passwordText
     }
     if (-not $passwordSet) {
-      $passwordSet = Type-IntoFocusedInput $passwordText
-      if (-not $passwordSet) {
-        $passwordSet = Paste-IntoFocusedInput $passwordText
-      }
+      $passwordSet = Type-IntoWindowViaPostMessage -preferredPid $preferredPid -text $passwordText
     }
     if (-not $passwordSet) {
       Log-Automation "login-flow-password-failed tabs=$emailTabs"
       return $false
     }
 
-    $emailVerified = Verify-EmailFieldPassive -preferredPid $preferredPid -emailText $emailText
-    if (-not $emailVerified) {
-      Log-Automation "login-flow-verify-failed tabs=$emailTabs"
+    if (-not $emailStageSkipped) {
+      $emailVerified = Verify-EmailFieldPassive -preferredPid $preferredPid -emailText $emailText
+      if (-not $emailVerified) {
+        Log-Automation "login-flow-verify-failed tabs=$emailTabs"
+        return $false
+      }
+    }
+
+    $focusBeforeSubmit = Get-FocusedElementInfo
+    if ($focusBeforeSubmit.usable -and $focusBeforeSubmit.isEdit -and -not $focusBeforeSubmit.isPassword) {
+      Log-Automation "login-flow-submit-blocked reason=non-password-edit-focused"
       return $false
     }
 
