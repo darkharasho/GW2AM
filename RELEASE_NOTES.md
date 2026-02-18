@@ -1,17 +1,15 @@
 # Release Notes
 
-Version v0.3.4 — February 17, 2026
+Version v0.3.5 — February 18, 2026
 
 ## 🌟 Highlights
-- Auto-locate feature to find the Guild Wars 2 executable path in settings.
-- In-settings Auto Locate button provides quick feedback on results.
+- Master password settings now persist across daily, weekly, and monthly modes.
 
 ## 🛠️ Improvements
-- If a path is configured, the app uses it; otherwise it searches Windows and Linux for GW2.
-- Triggering auto-locate shows status and a toast with the result or an informational message.
+- Windows launcher autofill is streamlined and Ctrl+C shutdown behavior is normalized.
 
 ## 🧯 Fixes
-None.
+- Fixed Windows build process (pt1).
 
 ## ⚠️ Breaking Changes
-None.
+- None.
