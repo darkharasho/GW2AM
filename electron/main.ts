@@ -1224,7 +1224,7 @@ function startCredentialAutomation(
     return;
   }
   if (process.platform === 'linux') {
-    runLinuxCredentialAutomation(accountId, pid, email, password, bypassPortalPrompt, deps);
+    runLinuxCredentialAutomation(accountId, pid, email, password, bypassPortalPrompt, playClickXPercent, playClickYPercent, deps);
     return;
   }
   console.error(`Credential automation is not implemented for platform: ${process.platform}`);

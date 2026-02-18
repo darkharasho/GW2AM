@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import type { AutomationDeps } from './windows.js';
 
-export const LINUX_AUTOMATION_SCRIPT_VERSION = 'linux-autologin-v3';
+export const LINUX_AUTOMATION_SCRIPT_VERSION = 'linux-autologin-v4';
 
 export function startLinuxCredentialAutomation(
   accountId: string,
@@ -9,11 +9,23 @@ export function startLinuxCredentialAutomation(
   email: string,
   password: string,
   bypassPortalPrompt = false,
+  playClickXPercent?: number,
+  playClickYPercent?: number,
   deps?: AutomationDeps,
 ): void {
   if (!deps) return;
   if (process.platform !== 'linux') return;
-  deps.logMain('automation', `Linux automation start account=${accountId} pid=${pid} emailLen=${email.length} script=${LINUX_AUTOMATION_SCRIPT_VERSION}`);
+  const normalizedPlayClickXPercent = Number.isFinite(playClickXPercent)
+    ? Math.max(0, Math.min(1, Number(playClickXPercent)))
+    : undefined;
+  const normalizedPlayClickYPercent = Number.isFinite(playClickYPercent)
+    ? Math.max(0, Math.min(1, Number(playClickYPercent)))
+    : undefined;
+  const hasCustomPlayClick = typeof normalizedPlayClickXPercent === 'number' && typeof normalizedPlayClickYPercent === 'number';
+  deps.logMain(
+    'automation',
+    `Linux automation start account=${accountId} pid=${pid} emailLen=${email.length} script=${LINUX_AUTOMATION_SCRIPT_VERSION} customPlayClick=${hasCustomPlayClick ? `${normalizedPlayClickXPercent},${normalizedPlayClickYPercent}` : 'none'}`,
+  );
 
   const xdotoolCheck = spawnSync('which', ['xdotool'], { encoding: 'utf8' });
   if (xdotoolCheck.status !== 0) {
@@ -27,18 +39,29 @@ log_automation() {
 }
 
 log_automation "script-start pid=$GW2_PID version=${LINUX_AUTOMATION_SCRIPT_VERSION}"
+log_automation "mode=deterministic-launcher-flow"
 
 credential_delay_after_window_detect_ms=700
 window_detected_ms=0
 credentials_submitted_ms=0
 play_click_not_before_ms=0
 play_attempt_count=0
-max_play_attempts=1
+max_play_attempts=20
 last_play_attempt_ms=0
 seen_window=0
 hardened_attempted=0
 credential_submitted=0
 tab_profiles="14 1 6 2"
+activation_throttle_ms=1200
+last_activation_ms=0
+launcher_window_class=""
+launcher_window_name=""
+play_attempt_interval_ms=1000
+has_custom_play_click=0
+if [ -n "\${GW2_PLAY_X_PERCENT:-}" ] && [ -n "\${GW2_PLAY_Y_PERCENT:-}" ]; then
+  has_custom_play_click=1
+  log_automation "play-coordinate custom x=$GW2_PLAY_X_PERCENT y=$GW2_PLAY_Y_PERCENT"
+fi
 
 release_modifiers() {
   xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R 2>/dev/null || true
@@ -78,12 +101,48 @@ find_launcher_window() {
 }
 
 activate_launcher_window() {
+  local now_ms="$1"
+  if [ "$now_ms" -gt 0 ] 2>/dev/null && [ "$last_activation_ms" -gt 0 ] 2>/dev/null; then
+    if [ $((now_ms - last_activation_ms)) -lt "$activation_throttle_ms" ]; then
+      return 0
+    fi
+  fi
   xdotool windowraise "$win_id" 2>/dev/null || true
   xdotool windowactivate --sync "$win_id" 2>/dev/null || return 1
   xdotool windowfocus --sync "$win_id" 2>/dev/null || true
   local active_id
   active_id="$(xdotool getactivewindow 2>/dev/null || true)"
+  last_activation_ms="\${now_ms:-0}"
   [ "$active_id" = "$win_id" ]
+}
+
+get_window_name() {
+  xdotool getwindowname "$win_id" 2>/dev/null || true
+}
+
+get_window_class() {
+  xdotool getwindowclassname "$win_id" 2>/dev/null || true
+}
+
+is_launcher_identity() {
+  local current_class current_name
+  current_class="$(get_window_class)"
+  current_name="$(get_window_name)"
+
+  if [ -n "$launcher_window_class" ] && [ -n "$current_class" ] && [ "$current_class" != "$launcher_window_class" ]; then
+    return 1
+  fi
+
+  case "$current_name" in
+    *Guild\ Wars*|*ArenaNet*)
+      return 0
+      ;;
+  esac
+
+  if [ -n "$launcher_window_name" ] && [ "$current_name" = "$launcher_window_name" ]; then
+    return 0
+  fi
+  return 1
 }
 
 get_window_geometry() {
@@ -130,7 +189,7 @@ type_into_focused() {
 submit_hardened_once() {
   local tabs="$1"
   release_modifiers
-  activate_launcher_window || return 1
+  activate_launcher_window "$(date +%s%3N)" || return 1
   get_window_geometry || return 1
 
   local cx cy
@@ -157,14 +216,35 @@ click_play_button() {
   local attempt="$1"
   get_window_geometry || return 1
   local cx cy
-  cx=$((WIDTH - 250))
-  cy=$((HEIGHT - 250))
-  if [ "$cx" -lt 20 ]; then cx=20; fi
-  if [ "$cy" -lt 20 ]; then cy=20; fi
-  xdotool mousemove --window "$win_id" "$cx" "$cy" click 1 2>/dev/null || true
-  log_automation "play-click fixed-offset-v3 x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
-  sleep 0.08
-  return 0
+
+  if [ "$has_custom_play_click" -eq 1 ]; then
+    cx="$(awk -v w="$WIDTH" -v p="$GW2_PLAY_X_PERCENT" 'BEGIN { printf("%d", w * p) }')"
+    cy="$(awk -v h="$HEIGHT" -v p="$GW2_PLAY_Y_PERCENT" 'BEGIN { printf("%d", h * p) }')"
+    if [ "$cx" -lt 20 ]; then cx=20; fi
+    if [ "$cy" -lt 20 ]; then cy=20; fi
+    if [ "$cx" -gt $((WIDTH - 20)) ]; then cx=$((WIDTH - 20)); fi
+    if [ "$cy" -gt $((HEIGHT - 20)) ]; then cy=$((HEIGHT - 20)); fi
+    if click_client_point "$cx" "$cy"; then
+      log_automation "play-click profile=custom x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
+      return 0
+    fi
+  fi
+
+  cx="$(awk -v w="$WIDTH" 'BEGIN { printf("%d", w * 0.738) }')"
+  cy="$(awk -v h="$HEIGHT" 'BEGIN { printf("%d", h * 0.725) }')"
+  if click_client_point "$cx" "$cy"; then
+    log_automation "play-click profile=us x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
+    return 0
+  fi
+
+  cx="$(awk -v w="$WIDTH" 'BEGIN { printf("%d", w * 0.905) }')"
+  cy="$(awk -v h="$HEIGHT" 'BEGIN { printf("%d", h * 0.766) }')"
+  if click_client_point "$cx" "$cy"; then
+    log_automation "play-click profile=cn x=$cx y=$cy win_w=$WIDTH win_h=$HEIGHT attempt=$attempt"
+    return 0
+  fi
+
+  return 1
 }
 
 for i in $(seq 1 220); do
@@ -186,17 +266,19 @@ for i in $(seq 1 220); do
     seen_window=1
     window_detected_ms="$now_epoch_ms"
     log_automation "window-detected id=$win_id"
+    launcher_window_class="$(get_window_class)"
+    launcher_window_name="$(get_window_name)"
+    log_automation "window-identity class=\${launcher_window_class:-unknown} name=\${launcher_window_name:-unknown}"
     if get_window_geometry; then
       log_automation "window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
     fi
     log_automation "credentials-delay-start wait_ms=$credential_delay_after_window_detect_ms"
   fi
 
-  if ! activate_launcher_window; then
-    continue
-  fi
-
   if [ "$credential_submitted" -eq 0 ]; then
+    if ! activate_launcher_window "$now_epoch_ms"; then
+      continue
+    fi
     elapsed_ms=$((now_epoch_ms - window_detected_ms))
     if [ "$elapsed_ms" -lt "$credential_delay_after_window_detect_ms" ]; then
       continue
@@ -228,14 +310,19 @@ for i in $(seq 1 220); do
   if [ "$now_epoch_ms" -lt "$play_click_not_before_ms" ]; then
     continue
   fi
-  if [ $((now_epoch_ms - last_play_attempt_ms)) -lt 3000 ]; then
+  if [ $((now_epoch_ms - last_play_attempt_ms)) -lt "$play_attempt_interval_ms" ]; then
     continue
+  fi
+
+  if ! is_launcher_identity; then
+    log_automation "play-loop-stopped reason=non-launcher-window class=$(get_window_class) name=$(get_window_name)"
+    exit 0
   fi
 
   click_play_button "$play_attempt_count" || true
   play_attempt_count=$((play_attempt_count + 1))
   last_play_attempt_ms="$now_epoch_ms"
-  log_automation "play-click attempt=$play_attempt_count"
+  log_automation "play-attempt attempt=$play_attempt_count"
   if [ "$play_attempt_count" -ge "$max_play_attempts" ]; then
     log_automation "script-finished max-play-attempts reached"
     exit 0
@@ -258,6 +345,8 @@ exit 1
         GW2_EMAIL: email,
         GW2_PASSWORD: password,
         GW2_BYPASS_PORTAL_PROMPT: bypassPortalPrompt ? '1' : '0',
+        GW2_PLAY_X_PERCENT: typeof normalizedPlayClickXPercent === 'number' ? String(normalizedPlayClickXPercent) : '',
+        GW2_PLAY_Y_PERCENT: typeof normalizedPlayClickYPercent === 'number' ? String(normalizedPlayClickYPercent) : '',
       },
     },
   );
