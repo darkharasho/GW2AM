@@ -26,11 +26,14 @@ log_automation() {
 log_automation "script-start pid=$GW2_PID"
 credential_attempt_count=0
 max_credential_attempts=1
-credentials_submitted_epoch=0
-play_click_not_before_epoch=0
+credential_delay_after_window_detect_ms=7000
+window_detected_ms=0
+last_credential_wait_log_ms=0
+credentials_submitted_ms=0
+play_click_not_before_ms=0
 play_attempt_count=0
 max_play_attempts=1
-last_play_attempt_epoch=0
+last_play_attempt_ms=0
 seen_window=0
 post_login_geometry_logged=0
 
@@ -94,6 +97,24 @@ is_blocking_prompt_visible() {
     sleep 0.05
   }
 
+  submit_credentials_once() {
+    xdotool key --clearmodifiers --window "$win_id" Escape 2>/dev/null || true
+    sleep 0.05
+    clear_focused_input
+    xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_EMAIL"
+    sleep 0.12
+
+    # Prefer form-native traversal from email -> password.
+    xdotool key --clearmodifiers --window "$win_id" Tab
+    sleep 0.10
+    clear_focused_input
+    xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_PASSWORD"
+    sleep 0.16
+    xdotool key --clearmodifiers --window "$win_id" Return
+    log_automation "credentials-submitted"
+    return 0
+  }
+
   click_play_button() {
     local attempt="$1"
     local cx cy
@@ -130,8 +151,10 @@ is_blocking_prompt_visible() {
           log_automation "window-geometry x=$X y=$Y width=$WIDTH height=$HEIGHT"
         fi
         seen_window=1
+        window_detected_ms="$(date +%s%3N)"
+        log_automation "credentials-delay-start wait_ms=$credential_delay_after_window_detect_ms"
       fi
-      now_epoch="$(date +%s)"
+      now_epoch_ms="$(date +%s%3N)"
 
       xdotool windowraise "$win_id" 2>/dev/null || true
       xdotool windowactivate --sync "$win_id"
@@ -142,45 +165,39 @@ is_blocking_prompt_visible() {
       fi
 
       if [ "$credential_attempt_count" -lt "$max_credential_attempts" ]; then
-      # Single fixed wait so controls are writable; no retry/backoff typing loop.
-      sleep 2
-      active_id="$(xdotool getactivewindow 2>/dev/null || true)"
-      if [ "$active_id" != "$win_id" ]; then
+      if [ "$window_detected_ms" -eq 0 ]; then
         continue
       fi
 
-      # Keyboard-only credential flow tuned for launcher defaulting to password focus.
-      xdotool key --clearmodifiers --window "$win_id" Shift+Tab
-      sleep 0.08
-      clear_focused_input
-      log_automation "focus-email via single Shift+Tab and type"
-      xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_EMAIL"
-      sleep 0.12
+      credentials_wait_elapsed_ms=$((now_epoch_ms - window_detected_ms))
+      if [ "$credentials_wait_elapsed_ms" -lt "$credential_delay_after_window_detect_ms" ]; then
+        if [ $((now_epoch_ms - last_credential_wait_log_ms)) -ge 2000 ]; then
+          log_automation "waiting-before-credentials elapsed_ms=$credentials_wait_elapsed_ms target_ms=$credential_delay_after_window_detect_ms"
+          last_credential_wait_log_ms="$now_epoch_ms"
+        fi
+        continue
+      fi
 
-      xdotool key --clearmodifiers --window "$win_id" Tab
-      sleep 0.10
-      clear_focused_input
-      log_automation "focus-password via Tab and type"
-      xdotool type --clearmodifiers --window "$win_id" --delay 1 "$GW2_PASSWORD"
-      sleep 0.16
-      xdotool key --clearmodifiers --window "$win_id" Return
+      if ! submit_credentials_once; then
+        continue
+      fi
       sleep 3
 
       credential_attempt_count=$((credential_attempt_count + 1))
-      credentials_submitted_epoch="$(date +%s)"
-      play_click_not_before_epoch=$((credentials_submitted_epoch + 3))
-      log_automation "credentials-submitted attempt=$credential_attempt_count"
+      credentials_submitted_ms="$(date +%s%3N)"
+      # Reduce post-login wait before first Play click from 3.0s to 1.5s.
+      play_click_not_before_ms=$((credentials_submitted_ms + 1500))
       continue
     fi
 
     if [ "$credential_attempt_count" -eq 0 ]; then
       continue
     fi
-    if [ "$now_epoch" -lt "$play_click_not_before_epoch" ]; then
+    if [ "$now_epoch_ms" -lt "$play_click_not_before_ms" ]; then
       continue
     fi
 
-    if [ $((now_epoch - last_play_attempt_epoch)) -lt 4 ]; then
+    if [ $((now_epoch_ms - last_play_attempt_ms)) -lt 4000 ]; then
       continue
     fi
 
@@ -193,7 +210,7 @@ is_blocking_prompt_visible() {
 
     click_play_button "$play_attempt_count" || true
     play_attempt_count=$((play_attempt_count + 1))
-    last_play_attempt_epoch="$now_epoch"
+    last_play_attempt_ms="$now_epoch_ms"
     log_automation "play-click attempt=$play_attempt_count"
     if [ "$play_attempt_count" -ge "$max_play_attempts" ]; then
       log_automation "script-finished max-play-attempts reached"

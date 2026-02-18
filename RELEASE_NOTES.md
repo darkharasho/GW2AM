@@ -1,17 +1,17 @@
 # Release Notes
 
-Version v0.2.2 — February 9, 2026
+Version v0.3.4 — February 17, 2026
 
 ## 🌟 Highlights
-- Master key cache is now encrypted using OS-backed secure storage when available (plaintext fallback if not supported).
-- A runtime flags API for showcase mode is added, with corresponding UI updates.
+- Auto-locate feature to find the Guild Wars 2 executable path in settings.
+- In-settings Auto Locate button provides quick feedback on results.
 
 ## 🛠️ Improvements
-- New UI themes added: Elonian Sun, Domain Of Ice, Crystal Bloom, and Verdant Canopy.
-- Layout improvements include updated body element dimensions and transform for better responsiveness.
+- If a path is configured, the app uses it; otherwise it searches Windows and Linux for GW2.
+- Triggering auto-locate shows status and a toast with the result or an informational message.
 
 ## 🧯 Fixes
-- Toast notifications have been added to surface API call timeouts and provide clearer feedback.
+None.
 
 ## ⚠️ Breaking Changes
-- None.
+None.

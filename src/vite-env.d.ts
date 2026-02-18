@@ -34,6 +34,7 @@ interface Api {
 
     saveSettings: (settings: AppSettings) => Promise<void>;
     getSettings: () => Promise<AppSettings | null>;
+    autoLocateGw2Path: () => Promise<{ found: boolean; path?: string; message: string }>;
     getRuntimeFlags: () => Promise<{ isDevShowcase: boolean }>;
     checkForUpdates: () => void;
     restartApp: () => void;
@@ -55,6 +56,7 @@ interface Api {
     resetApp: () => void;
     configurePortalPermissions: () => Promise<{ success: boolean; message: string }>;
     checkPortalPermissions: () => Promise<{ configured: boolean; message: string }>;
+    prewarmLinuxInputAuthorization: () => Promise<{ success: boolean; message: string }>;
 }
 
 declare global {

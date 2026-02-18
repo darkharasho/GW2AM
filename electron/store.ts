@@ -26,6 +26,7 @@ const store = new Store<StoreSchema>({
             gw2Path: '',
             masterPasswordPrompt: 'every_time',
             themeId: 'blood_legion',
+            linuxInputAuthorizationPrewarmAttempted: false,
         },
         windowState: {
             width: 400,
