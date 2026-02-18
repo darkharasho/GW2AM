@@ -1,17 +1,16 @@
 # Release Notes
 
-Version v0.4.7 — February 18, 2026
+Version v0.4.8 — February 18, 2026
 
 ## 🌟 Highlights
-- Windows automation script updated to v24 for GW2 Account Manager.
+- Windows automation script updated to v25 for GW2 Account Manager.
 
 ## 🛠️ Improvements
-- Window handling now prioritizes the launcher and main GW2 window using the process lineage, improving reliability.
-- Launcher selection respects a preferred process and refreshes the lineage only when needed to stay responsive.
+- More reliable window focus: it activates the launcher and confirms the correct window.
+- Fallback by window title added: if the launcher isn’t found via the active process, the app tries the window title to locate it and logs the outcome.
 
 ## 🧯 Fixes
-- Validates that windows are real and visible before interacting to prevent misfires.
-- Improves main window detection to avoid using non-usable or unrelated windows.
+- None.
 
 ## ⚠️ Breaking Changes
 - None.
