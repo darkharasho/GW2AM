@@ -1,17 +1,15 @@
 # Release Notes
 
-Version v0.4.2 — February 18, 2026
+Version v0.4.3 — February 18, 2026
 
 ## 🌟 Highlights
-- Windows launcher automation improvements for more reliable login and in-game flow.
-- Linux AppImage workflow updated to streamline builds.
+- Linux automation now supports custom play-click coordinates via GW2_PLAY_X_PERCENT and GW2_PLAY_Y_PERCENT.
 
 ## 🛠️ Improvements
-- Windows automation now uses the newer win-autologin-v20 script for better reliability.
-- Automation now logs startup mode and whether custom play coordinates are used to aid troubleshooting.
+- Linux automation now retries the Play action up to 20 times to improve reliability.
 
 ## 🧯 Fixes
-- Stabilized launcher login and play on Windows to prevent extra in-game input.
+- Windows automation login flow now handles email and password input more reliably.
 
 ## ⚠️ Breaking Changes
-None.
+- None.
