@@ -13,7 +13,7 @@ import crypto from 'crypto';
 import os from 'os';
 import { LaunchStateMachine } from './launchStateMachine.js';
 import { startWindowsCredentialAutomation as runWindowsCredentialAutomation } from './automation/windows.js';
-import { startLinuxCredentialAutomation as runLinuxCredentialAutomation } from './automation/linux.js';
+import { startLinuxCredentialAutomation as runLinuxCredentialAutomation, type LinuxAutomationTimingOptions } from './automation/linux.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -37,6 +37,7 @@ const SAFE_STORAGE_PREFIX = 'safe:';
 const STEAM_GW2_APP_ID = '1284210';
 const WINDOWS_PROCESS_SNAPSHOT_TTL_MS = 1500;
 const LINUX_PREWARM_REFOCUS_IDLE_MS = 60 * 60 * 1000;
+const LINUX_PROCESS_WAIT_TIMEOUT_MS = 180000;
 const GW2_UPDATE_RECENT_REUSE_MS = 10 * 60 * 1000;
 let windowsProcessSnapshotCache: { timestamp: number; processes: any[] } = { timestamp: 0, processes: [] };
 let linuxLastBlurAt = 0;
@@ -401,14 +402,12 @@ function hasRecentSuccessfulGw2Update(): boolean {
 
 function getAppSettings(): {
   gw2Path?: string;
-  bypassLinuxPortalPrompt?: boolean;
   gw2AutoUpdateBeforeLaunch?: boolean;
   gw2AutoUpdateBackground?: boolean;
   gw2AutoUpdateVisible?: boolean;
 } {
   return (store.get('settings') as {
     gw2Path?: string;
-    bypassLinuxPortalPrompt?: boolean;
     gw2AutoUpdateBeforeLaunch?: boolean;
     gw2AutoUpdateBackground?: boolean;
     gw2AutoUpdateVisible?: boolean;
@@ -1211,6 +1210,7 @@ function startCredentialAutomation(
   bypassPortalPrompt = false,
   playClickXPercent?: number,
   playClickYPercent?: number,
+  linuxTimingOptions?: LinuxAutomationTimingOptions,
 ): void {
   logMain('automation', `Dispatch account=${accountId} platform=${process.platform} pid=${pid}`);
   const deps = {
@@ -1224,7 +1224,7 @@ function startCredentialAutomation(
     return;
   }
   if (process.platform === 'linux') {
-    runLinuxCredentialAutomation(accountId, pid, email, password, bypassPortalPrompt, playClickXPercent, playClickYPercent, deps);
+    runLinuxCredentialAutomation(accountId, pid, email, password, bypassPortalPrompt, playClickXPercent, playClickYPercent, linuxTimingOptions, deps);
     return;
   }
   console.error(`Credential automation is not implemented for platform: ${process.platform}`);
@@ -1903,7 +1903,6 @@ ipcMain.handle('launch-account', async (_, id) => {
 
   const settings = getAppSettings();
   const gw2Path = settings?.gw2Path?.trim();
-  const bypassLinuxPortalPrompt = Boolean(settings?.bypassLinuxPortalPrompt);
   const autoUpdateBeforeLaunch = Boolean(settings?.gw2AutoUpdateBeforeLaunch);
 
   if (gw2Path && !fs.existsSync(gw2Path)) {
@@ -1966,15 +1965,20 @@ ipcMain.handle('launch-account', async (_, id) => {
     launchedPid,
     account.email,
     password,
-    bypassLinuxPortalPrompt,
+    false,
     account.playClickXPercent,
     account.playClickYPercent,
   );
   launchStateMachine.setState(id, 'credentials_submitted', 'inferred', 'Credential automation started');
 
-  const processWaitTimeoutMs = process.platform === 'win32' ? 90000 : 25000;
+  const processWaitTimeoutMs = process.platform === 'win32'
+    ? 90000
+    : process.platform === 'linux'
+      ? LINUX_PROCESS_WAIT_TIMEOUT_MS
+      : 25000;
   const launched = await waitForAccountProcess(account.id, processWaitTimeoutMs);
   if (!launched) {
+    stopAccountAutomation(account.id, 'process-timeout');
     console.error(`GW2 did not appear as running for account ${account.nickname} within timeout.`);
     launchStateMachine.setState(id, 'errored', 'inferred', 'Process not detected before timeout');
   } else {
@@ -1989,7 +1993,6 @@ ipcMain.handle('save-settings', async (_, settings) => {
     gw2Path?: string;
     masterPasswordPrompt?: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never';
     themeId?: string;
-    bypassLinuxPortalPrompt?: boolean;
     linuxInputAuthorizationPrewarmAttempted?: boolean;
     gw2AutoUpdateBeforeLaunch?: boolean;
     gw2AutoUpdateBackground?: boolean;
@@ -2013,7 +2016,6 @@ ipcMain.handle('get-settings', async () => {
       gw2Path: '/usr/bin/gw2-showcase',
       masterPasswordPrompt: 'never',
       themeId: 'blood_legion',
-      bypassLinuxPortalPrompt: false,
       gw2AutoUpdateBeforeLaunch: true,
       gw2AutoUpdateBackground: false,
       gw2AutoUpdateVisible: false,

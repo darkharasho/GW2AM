@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Github } from 'lucide-react';
 import { GW2_THEMES } from '../themes/themes';
 import { applyTheme } from '../themes/applyTheme';
@@ -9,39 +9,111 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
+type SettingsPayload = {
+    gw2Path: string;
+    masterPasswordPrompt: 'every_time' | 'daily' | 'weekly' | 'monthly' | 'never';
+    themeId: string;
+    gw2AutoUpdateBeforeLaunch: boolean;
+    gw2AutoUpdateBackground: boolean;
+    gw2AutoUpdateVisible: boolean;
+};
+
+const AUTOSAVE_DEBOUNCE_MS = 350;
+
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const [gw2Path, setGw2Path] = useState('');
     const [isLocatingGw2Path, setIsLocatingGw2Path] = useState(false);
     const [masterPasswordPrompt, setMasterPasswordPrompt] = useState<'every_time' | 'daily' | 'weekly' | 'monthly' | 'never'>('every_time');
     const [themeId, setThemeId] = useState('blood_legion');
-    const [bypassLinuxPortalPrompt, setBypassLinuxPortalPrompt] = useState(false);
     const [gw2AutoUpdateBeforeLaunch, setGw2AutoUpdateBeforeLaunch] = useState(false);
     const [gw2AutoUpdateBackground, setGw2AutoUpdateBackground] = useState(false);
     const [gw2AutoUpdateVisible, setGw2AutoUpdateVisible] = useState(false);
     const [gw2UpdateStatusText, setGw2UpdateStatusText] = useState('Idle');
     const [isRunningGw2Update, setIsRunningGw2Update] = useState(false);
-    const [portalConfigStatus, setPortalConfigStatus] = useState<{ configured: boolean; message: string } | null>(null);
     const [isExportingDiagnostics, setIsExportingDiagnostics] = useState(false);
+    const [isHydrated, setIsHydrated] = useState(false);
+    const saveTimerRef = useRef<number | null>(null);
+    const pendingSaveRef = useRef<{ payload: SettingsPayload; snapshot: string } | null>(null);
+    const lastSavedSnapshotRef = useRef('');
+
+    const buildPayload = (): SettingsPayload => ({
+        gw2Path,
+        masterPasswordPrompt,
+        themeId,
+        gw2AutoUpdateBeforeLaunch,
+        gw2AutoUpdateBackground,
+        gw2AutoUpdateVisible,
+    });
+
+    const commitSave = async (payload: SettingsPayload, snapshot: string): Promise<void> => {
+        try {
+            await window.api.saveSettings(payload);
+            lastSavedSnapshotRef.current = snapshot;
+        } catch {
+            showToast('Failed to save settings.');
+        }
+    };
+
+    const flushPendingSave = () => {
+        const pending = pendingSaveRef.current;
+        if (!pending) return;
+        if (saveTimerRef.current !== null) {
+            window.clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+        }
+        pendingSaveRef.current = null;
+        void commitSave(pending.payload, pending.snapshot);
+    };
+
+    const handleClose = () => {
+        flushPendingSave();
+        onClose();
+    };
 
     useEffect(() => {
-        if (!isOpen) return;
-        window.api.getSettings().then((settings) => {
-            if (settings) {
-                setGw2Path(settings.gw2Path || '');
-                setMasterPasswordPrompt(settings.masterPasswordPrompt ?? 'every_time');
-                setThemeId(settings.themeId || 'blood_legion');
-                setBypassLinuxPortalPrompt(settings.bypassLinuxPortalPrompt ?? false);
-                setGw2AutoUpdateBeforeLaunch(settings.gw2AutoUpdateBeforeLaunch ?? false);
-                setGw2AutoUpdateBackground(settings.gw2AutoUpdateBackground ?? false);
-                setGw2AutoUpdateVisible(settings.gw2AutoUpdateVisible ?? false);
+        if (!isOpen) {
+            setIsHydrated(false);
+            if (saveTimerRef.current !== null) {
+                window.clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = null;
             }
+            pendingSaveRef.current = null;
+            return;
+        }
+
+        setIsHydrated(false);
+        let cancelled = false;
+
+        window.api.getSettings().then((settings) => {
+            if (cancelled) return;
+            const normalized: SettingsPayload = {
+                gw2Path: settings?.gw2Path || '',
+                masterPasswordPrompt: settings?.masterPasswordPrompt ?? 'every_time',
+                themeId: settings?.themeId || 'blood_legion',
+                gw2AutoUpdateBeforeLaunch: settings?.gw2AutoUpdateBeforeLaunch ?? false,
+                gw2AutoUpdateBackground: settings?.gw2AutoUpdateBackground ?? false,
+                gw2AutoUpdateVisible: settings?.gw2AutoUpdateVisible ?? false,
+            };
+            setGw2Path(normalized.gw2Path);
+            setMasterPasswordPrompt(normalized.masterPasswordPrompt);
+            setThemeId(normalized.themeId);
+            setGw2AutoUpdateBeforeLaunch(normalized.gw2AutoUpdateBeforeLaunch);
+            setGw2AutoUpdateBackground(normalized.gw2AutoUpdateBackground);
+            setGw2AutoUpdateVisible(normalized.gw2AutoUpdateVisible);
+            const snapshot = JSON.stringify(normalized);
+            lastSavedSnapshotRef.current = snapshot;
+            pendingSaveRef.current = null;
+        }).finally(() => {
+            if (!cancelled) setIsHydrated(true);
         });
+
         window.api.getGw2UpdateStatus().then((status) => {
             const message = status.message ? ` - ${status.message}` : '';
             setGw2UpdateStatusText(`${status.phase}${message}`);
         }).catch(() => {
             setGw2UpdateStatusText('Unknown');
         });
+
         const unsubscribeGw2Status = window.api.onGw2UpdateStatus((status) => {
             const typed = status as {
                 phase?: string;
@@ -52,32 +124,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             setGw2UpdateStatusText(`${phase}${message}`);
             setIsRunningGw2Update(phase === 'starting' || phase === 'running' || phase === 'queued');
         });
-        // Check portal configuration status
-        window.api.checkPortalPermissions().then((status) => {
-            setPortalConfigStatus(status);
-        });
+
         return () => {
+            cancelled = true;
             unsubscribeGw2Status();
         };
     }, [isOpen]);
 
-    const handleSave = async () => {
-        try {
-            await window.api.saveSettings({
-                gw2Path,
-                masterPasswordPrompt,
-                themeId,
-                bypassLinuxPortalPrompt,
-                gw2AutoUpdateBeforeLaunch,
-                gw2AutoUpdateBackground,
-                gw2AutoUpdateVisible,
-            });
-            applyTheme(themeId);
-            onClose();
-        } catch {
-            showToast('Failed to save settings.');
+    useEffect(() => {
+        if (!isOpen || !isHydrated) return;
+        const payload = buildPayload();
+        const snapshot = JSON.stringify(payload);
+        if (snapshot === lastSavedSnapshotRef.current) return;
+        if (saveTimerRef.current !== null) {
+            window.clearTimeout(saveTimerRef.current);
         }
-    };
+        pendingSaveRef.current = { payload, snapshot };
+        saveTimerRef.current = window.setTimeout(() => {
+            const pending = pendingSaveRef.current;
+            if (!pending) return;
+            pendingSaveRef.current = null;
+            saveTimerRef.current = null;
+            void commitSave(pending.payload, pending.snapshot);
+        }, AUTOSAVE_DEBOUNCE_MS);
+    }, [
+        isOpen,
+        isHydrated,
+        gw2Path,
+        masterPasswordPrompt,
+        themeId,
+        gw2AutoUpdateBeforeLaunch,
+        gw2AutoUpdateBackground,
+        gw2AutoUpdateVisible,
+    ]);
 
     const handleRunGw2Update = async () => {
         if (isRunningGw2Update) return;
@@ -91,20 +170,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             showToast('Failed to start GW2 update.');
         } finally {
             setIsRunningGw2Update(false);
-        }
-    };
-
-    const handleConfigurePortal = async () => {
-        try {
-            const result = await window.api.configurePortalPermissions();
-            if (result.success) {
-                showToast(result.message);
-                setPortalConfigStatus({ configured: true, message: result.message });
-            } else {
-                showToast(`Failed: ${result.message}`);
-            }
-        } catch {
-            showToast('Failed to configure portal permissions.');
         }
     };
 
@@ -153,11 +218,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
     return (
         <div className="fixed left-0 right-0 bottom-0 top-9 z-50 border-t border-[var(--theme-border)]">
-            <button className="absolute inset-0 bg-[var(--theme-overlay)] backdrop-blur-[1px]" onClick={onClose} aria-label="Close Settings Pane" />
+            <button className="absolute inset-0 bg-[var(--theme-overlay)] backdrop-blur-[1px]" onClick={handleClose} aria-label="Close Settings Pane" />
             <div className="absolute right-0 top-0 h-full w-full max-w-md bg-[var(--theme-surface)] border-l border-[var(--theme-border)] shadow-2xl flex flex-col overflow-hidden">
                 <div className="flex justify-between items-center px-6 py-4 border-b border-[var(--theme-border)] bg-[var(--theme-surface)] shrink-0">
                     <h2 className="text-xl font-bold text-white">Settings</h2>
-                    <button onClick={onClose} className="text-[var(--theme-text-muted)] hover:text-white transition-colors">
+                    <button onClick={handleClose} className="text-[var(--theme-text-muted)] hover:text-white transition-colors">
                         <X size={24} />
                     </button>
                 </div>
@@ -267,37 +332,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                         </p>
                     </div>
 
-                    {portalConfigStatus && portalConfigStatus.message !== 'Only available on Linux' && (
-                        <div>
-                            <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Linux Automation (xdotool)</label>
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-[var(--theme-text)]">Bypass remote control prompt</span>
-                                    <input
-                                        type="checkbox"
-                                        checked={bypassLinuxPortalPrompt}
-                                        onChange={(e) => setBypassLinuxPortalPrompt(e.target.checked)}
-                                        className="w-4 h-4 rounded"
-                                    />
-                                </div>
-                                {portalConfigStatus && (
-                                    <p className="text-xs text-[var(--theme-text-dim)]">
-                                        Status: {portalConfigStatus.configured ? '✓ Configured' : '✗ Not configured'}
-                                    </p>
-                                )}
-                                <button
-                                    onClick={handleConfigurePortal}
-                                    className="w-full px-3 py-2 rounded-lg bg-[var(--theme-control-bg)] hover:bg-[var(--theme-control-hover)] text-[var(--theme-text)] transition-colors text-sm"
-                                >
-                                    Configure Portal Permissions
-                                </button>
-                                <p className="text-xs text-[var(--theme-text-dim)]">
-                                    This configures xdg-desktop-portal to automatically allow GW2AM to control input without prompting.
-                                </p>
-                            </div>
-                        </div>
-                    )}
-
                     <div>
                         <label className="block text-sm font-medium text-[var(--theme-text-muted)] mb-2">Diagnostics</label>
                         <button
@@ -335,18 +369,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                         </div>
                     </div>
 
-                    <div className="flex justify-end space-x-3 mt-6">
+                    <div className="flex justify-between items-center mt-6">
+                        <span className="text-xs text-[var(--theme-text-dim)]">Settings save automatically.</span>
                         <button
-                            onClick={onClose}
+                            onClick={handleClose}
                             className="px-4 py-2 rounded-lg text-[var(--theme-text)] hover:bg-[var(--theme-control-bg)] transition-colors"
                         >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={handleSave}
-                            className="px-4 py-2 bg-[var(--theme-accent)] hover:bg-[var(--theme-accent-strong)] text-white rounded-lg transition-colors font-medium"
-                        >
-                            Save Settings
+                            Close
                         </button>
                     </div>
                 </div>
