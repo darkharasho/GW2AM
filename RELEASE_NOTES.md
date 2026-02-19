@@ -1,18 +1,16 @@
 # Release Notes
 
-Version v0.4.9 — February 18, 2026
+Version v0.5.0 — February 18, 2026
 
 ## 🌟 Highlights
-- Windows automation script updated to version win-autologin-v27 for GW2 Account Manager.
-- Improved email and password handling to make login automation more robust.
+- Linux automation script updated to linux-autologin-v16.
+- Linux credential automation now supports configurable timing options for delays and iterations.
 
 ## 🛠️ Improvements
-- The login flow now tries multiple methods to fill in email and password and uses the first method that succeeds.
-- Email verification adapts based on the chosen input path to reduce false inconclusive results.
+- Settings modal updated to surface the new Linux automation timing options in the app UI.
 
 ## 🧯 Fixes
-- Email verification respects a configurable inconclusive outcome, improving reliability.
-- The final login submission log now shows which input methods were used for email and password.
+- None.
 
 ## ⚠️ Breaking Changes
 - None.
